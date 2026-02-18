@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "package": "ca.spottedleaf.starlight.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(DEFAULT)",
+  "mixins": [
+    "common.ChunkMixin",
+    "common.WorldMixin",
+    "common.BlockStateContainerMixin",
+    "common.ChunkProviderServerMixin",
+    "common.AnvilChunkLoaderMixin",
+    "common.ExtendedBlockStorageMixin",
+    "common.SPacketChunkDataMixin",
+    "common.BlockMixin",
+    "common.BlockSlabMixin",
+    "common.BlockStairsMixin"
+  ],
+  "client": [
+    "client.RenderGlobalMixin",
+    "client.MinecraftMixin",
+    "client.ChunkCacheMixin",
+    "client.BlockModelRendererMixin"
+  ],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}
