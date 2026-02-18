@@ -12,7 +12,6 @@ No benchmarks have been conducted, so the actual performance impact is unknown.
 
 ## Incompatibilities
 The following mods are not compatible:
-- **Celeritas** (currently a work in progress)
 - **CubicChunks**
 
 # CleanroomModTemplate
