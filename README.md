@@ -1,11 +1,14 @@
 # Starlight Legacy
 A mod that backports select features from Starlight 1.20.1, including some functionality from Alfheim. This is a personal hobby project and may not be actively maintained.
 
-# Description
+## Description
 A mod that attempts to backport Starlight to 1.12.2.
 No benchmarks have been conducted, so the actual performance impact is unknown.
 
-# Incompatibilities
+## Requirements
+- CleanroomLoader
+
+## Incompatibilities
 The following mods are not compatible:
 - **Celeritas** (currently a work in progress)
 - **CubicChunks**
