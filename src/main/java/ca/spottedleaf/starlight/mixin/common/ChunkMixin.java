@@ -48,6 +48,15 @@ public abstract class ChunkMixin implements ExtendedChunk {
     @Unique
     private volatile boolean[] blockEmptinessMap;
 
+    /**
+     * Tracks whether this chunk's lighting has been initialized (lightChunk/loadInChunk completed).
+     * Before initialization, blockChange() calls are skipped since lightChunk() will compute
+     * full lighting anyway. This avoids queuing thousands of redundant light tasks during
+     * chunk generation (populate phase runs after onLoad, so those changes ARE processed).
+     */
+    @Unique
+    private volatile boolean starlight$lightInitialized = false;
+
     @Override
     public SWMRNibbleArray[] getBlockNibbles() {
         return this.blockNibbles;
@@ -260,8 +269,9 @@ public abstract class ChunkMixin implements ExtendedChunk {
 
     @Inject(method = "setBlockState", at = @At("RETURN"))
     private void onSetBlockState(BlockPos pos, IBlockState state, CallbackInfoReturnable<IBlockState> cir) {
-        if (cir.getReturnValue() != null && this.world != null) {
-            // C2 fix: notify light engine on BOTH client and server
+        if (cir.getReturnValue() != null && this.world != null && this.starlight$lightInitialized) {
+            // Only queue light changes after lighting is initialized.
+            // Before onLoad/lightChunk, changes are redundant since full lighting will be computed.
             final StarLightInterface lightEngine = ((StarLightLightingProvider)this.world).getLightEngine();
             if (lightEngine != null) {
                 lightEngine.blockChange(pos);
@@ -286,8 +296,13 @@ public abstract class ChunkMixin implements ExtendedChunk {
             lightEngine.loadInChunk(this.x, this.z, emptySections);
             // Sync SWMR → vanilla NibbleArrays for Celeritas compatibility
             lightEngine.syncSWMRToVanilla((Chunk)(Object)this);
+            this.starlight$lightInitialized = true;
         } else {
-            // Server side
+            // Server side: clear any redundant light tasks queued before onLoad
+            // (e.g., from chunk primer or early setBlockState calls during generation).
+            // lightChunk() will compute full lighting from scratch anyway.
+            lightEngine.removeChunkTasks(this.x, this.z);
+
             final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);
 
             if (this.starlight$isLitByStarlight()) {
@@ -301,6 +316,7 @@ public abstract class ChunkMixin implements ExtendedChunk {
             // C3 fix: queue edge checks instead of running them immediately.
             // By the time propagateChanges() processes this, more neighbors should be loaded.
             lightEngine.queueEdgeCheck(this.x, this.z);
+            this.starlight$lightInitialized = true;
         }
     }
 

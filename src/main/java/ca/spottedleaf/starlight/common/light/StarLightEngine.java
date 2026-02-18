@@ -445,6 +445,40 @@ public abstract class StarLightEngine {
         }
     }
 
+    /**
+     * Combined method: process block changes AND edge checks in a single cache setup/teardown cycle.
+     * This avoids the overhead of setting up the 5x5 chunk cache twice for the same chunk when both
+     * block changes and edge checks are queued in the same ChunkTasks.
+     */
+    public final void blocksChangedInChunkAndCheckEdges(final World world, final int chunkX, final int chunkZ,
+                                                        final Set<BlockPos> positions, final Boolean[] changedSections,
+                                                        final ShortCollection edgeSections) {
+        // Use 2-radius if we have block changes (need wider propagation reach), 1-radius otherwise
+        final boolean need2Radius = (positions != null && !positions.isEmpty()) || changedSections != null;
+        this.setupCaches(world, chunkX * 16 + 7, 128, chunkZ * 16 + 7, true, need2Radius);
+        try {
+            final Chunk chunk = this.getChunkInCache(chunkX, chunkZ);
+            if (chunk == null) {
+                return;
+            }
+            if (changedSections != null) {
+                final boolean[] ret = this.handleEmptySectionChanges(world, chunk, changedSections, false);
+                if (ret != null) {
+                    this.setEmptinessMap(chunk, ret);
+                }
+            }
+            if (positions != null && !positions.isEmpty()) {
+                this.propagateBlockChanges(world, chunk, positions);
+            }
+            if (edgeSections != null) {
+                this.checkChunkEdges(world, chunk, edgeSections);
+            }
+            this.updateVisible(world);
+        } finally {
+            this.destroyCaches();
+        }
+    }
+
     // subclasses should not initialise caches, as this will always be done by the super call
     // subclasses should not invoke updateVisible, as this will always be done by the super call
     protected abstract void propagateBlockChanges(final World world, final Chunk atChunk, final Set<BlockPos> positions);

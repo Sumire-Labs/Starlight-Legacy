@@ -51,18 +51,15 @@ public abstract class SPacketChunkDataMixin {
             blockNibbles[lightIndex].updateVisible();
             skyNibbles[lightIndex].updateVisible();
 
-            // Copy SWMR visible data into the existing vanilla NibbleArrays.
-            // For NULL/HIDDEN states, toVanillaNibble() returns null — fill with defaults
-            // so the client doesn't receive stale zeros.
+            // Zero-copy SWMR visible data into vanilla NibbleArrays.
+            // copyVisibleDataInto() writes directly into the existing byte[], avoiding
+            // the NibbleArray + byte[] clone allocation overhead of toVanillaNibble().
 
             // Block light
-            final NibbleArray blockNibble = blockNibbles[lightIndex].toVanillaNibble();
             final NibbleArray existingBlock = sections[i].getBlockLight();
             if (existingBlock != null) {
-                if (blockNibble != null) {
-                    System.arraycopy(blockNibble.getData(), 0, existingBlock.getData(), 0, existingBlock.getData().length);
-                } else {
-                    // NULL/HIDDEN → default block light = 0
+                if (!blockNibbles[lightIndex].copyVisibleDataInto(existingBlock.getData())) {
+                    // NULL, UNINIT, or HIDDEN → default block light = 0
                     Arrays.fill(existingBlock.getData(), (byte)0);
                 }
             }
@@ -71,12 +68,7 @@ public abstract class SPacketChunkDataMixin {
             if (hasSkyLight) {
                 final NibbleArray existingSky = sections[i].getSkyLight();
                 if (existingSky != null) {
-                    if (skyNibbles[lightIndex].isInitialisedVisible()) {
-                        final NibbleArray skyNibble = skyNibbles[lightIndex].toVanillaNibble();
-                        if (skyNibble != null) {
-                            System.arraycopy(skyNibble.getData(), 0, existingSky.getData(), 0, existingSky.getData().length);
-                        }
-                    } else {
+                    if (!skyNibbles[lightIndex].copyVisibleDataInto(existingSky.getData())) {
                         // NULL, UNINIT, or HIDDEN → default sky light = 15 (0xFF)
                         Arrays.fill(existingSky.getData(), (byte)0xFF);
                     }

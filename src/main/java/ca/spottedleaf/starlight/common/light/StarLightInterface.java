@@ -345,9 +345,19 @@ public final class StarLightInterface {
     }
 
     public void queueEdgeCheck(final int chunkX, final int chunkZ) {
-        this.lightQueue.queueChunkLighting(chunkX, chunkZ, () -> {
-            this.checkChunkEdges(chunkX, chunkZ);
-        });
+        // Use section-specific edge check fields instead of a Runnable so that
+        // propagateChanges() can combine edge checks with block changes in a single
+        // cache setup/teardown cycle (avoiding redundant 5x5 chunk cache operations).
+        final ShortOpenHashSet allSections = new ShortOpenHashSet(this.maxLightSection - this.minLightSection + 1);
+        for (int s = this.minLightSection; s <= this.maxLightSection; s++) {
+            allSections.add((short)s);
+        }
+        if (this.hasSkyLight) {
+            this.lightQueue.queueChunkSkylightEdgeCheck(chunkX, chunkZ, allSections);
+        }
+        if (this.hasBlockLight) {
+            this.lightQueue.queueChunkBlocklightEdgeCheck(chunkX, chunkZ, allSections);
+        }
     }
 
     public void removeChunkTasks(final int chunkX, final int chunkZ) {
@@ -377,30 +387,20 @@ public final class StarLightInterface {
                 skyNibbles[lightIndex].updateVisible();
             }
 
-            // Block light
+            // Block light — zero-copy: write directly into vanilla NibbleArray's backing array
             final NibbleArray existingBlock = sections[i].getBlockLight();
             if (existingBlock != null) {
-                if (blockNibbles[lightIndex].isInitialisedVisible()) {
-                    final NibbleArray vanillaBlock = blockNibbles[lightIndex].toVanillaNibble();
-                    if (vanillaBlock != null) {
-                        System.arraycopy(vanillaBlock.getData(), 0, existingBlock.getData(), 0, existingBlock.getData().length);
-                    }
-                } else {
+                if (!blockNibbles[lightIndex].copyVisibleDataInto(existingBlock.getData())) {
                     // NULL, UNINIT, or HIDDEN → default block light = 0
                     Arrays.fill(existingBlock.getData(), (byte)0);
                 }
             }
 
-            // Sky light
+            // Sky light — zero-copy
             if (this.hasSkyLight) {
                 final NibbleArray existingSky = sections[i].getSkyLight();
                 if (existingSky != null) {
-                    if (skyNibbles[lightIndex].isInitialisedVisible()) {
-                        final NibbleArray vanillaSky = skyNibbles[lightIndex].toVanillaNibble();
-                        if (vanillaSky != null) {
-                            System.arraycopy(vanillaSky.getData(), 0, existingSky.getData(), 0, existingSky.getData().length);
-                        }
-                    } else {
+                    if (!skyNibbles[lightIndex].copyVisibleDataInto(existingSky.getData())) {
                         // NULL, UNINIT, or HIDDEN → default sky light = 15 (0xFF = both nibbles 15)
                         Arrays.fill(existingSky.getData(), (byte)0xFF);
                     }
@@ -408,6 +408,14 @@ public final class StarLightInterface {
             }
         }
     }
+
+    /**
+     * Maximum time (nanoseconds) to spend on light propagation per server tick.
+     * Prevents the "stop-and-burst" pattern where all queued edge checks process
+     * in one tick, stalling chunk generation. Remaining tasks carry over to next tick.
+     * Client-side always processes all tasks (no budget) to keep rendering responsive.
+     */
+    private static final long MAX_PROPAGATION_TIME_NS = 5_000_000L; // 5ms
 
     public void propagateChanges() {
         if (this.lightQueue.isEmpty()) {
@@ -419,6 +427,10 @@ public final class StarLightInterface {
 
         // Collect processed chunk coordinates for client-side vanilla sync
         final ArrayList<Long> processedChunks = this.isClientSide ? new ArrayList<>() : null;
+
+        // Server-side: apply time budget to prevent stalling chunk generation.
+        // Client-side: process all tasks to keep rendering responsive.
+        final long startTime = !this.isClientSide ? System.nanoTime() : 0L;
 
         try {
             LightQueue.ChunkTasks task;
@@ -435,19 +447,27 @@ public final class StarLightInterface {
 
                 final Set<BlockPos> positions = task.changedPositions;
                 final Boolean[] sectionChanges = task.changedSectionSet;
+                final boolean hasBlockChanges = !positions.isEmpty() || sectionChanges != null;
+                final boolean hasSkyEdges = task.queuedEdgeChecksSky != null;
+                final boolean hasBlockEdges = task.queuedEdgeChecksBlock != null;
 
-                if (skyEngine != null && (!positions.isEmpty() || sectionChanges != null)) {
-                    skyEngine.blocksChangedInChunk(this.world, chunkX, chunkZ, positions, sectionChanges);
+                // Use combined method to share a single cache setup/teardown per engine
+                // when both block changes and edge checks are needed for the same chunk.
+                if (skyEngine != null && (hasBlockChanges || hasSkyEdges)) {
+                    skyEngine.blocksChangedInChunkAndCheckEdges(
+                        this.world, chunkX, chunkZ,
+                        hasBlockChanges ? positions : null,
+                        hasBlockChanges ? sectionChanges : null,
+                        hasSkyEdges ? task.queuedEdgeChecksSky : null
+                    );
                 }
-                if (blockEngine != null && (!positions.isEmpty() || sectionChanges != null)) {
-                    blockEngine.blocksChangedInChunk(this.world, chunkX, chunkZ, positions, sectionChanges);
-                }
-
-                if (skyEngine != null && task.queuedEdgeChecksSky != null) {
-                    skyEngine.checkChunkEdges(this.world, chunkX, chunkZ, task.queuedEdgeChecksSky);
-                }
-                if (blockEngine != null && task.queuedEdgeChecksBlock != null) {
-                    blockEngine.checkChunkEdges(this.world, chunkX, chunkZ, task.queuedEdgeChecksBlock);
+                if (blockEngine != null && (hasBlockChanges || hasBlockEdges)) {
+                    blockEngine.blocksChangedInChunkAndCheckEdges(
+                        this.world, chunkX, chunkZ,
+                        hasBlockChanges ? positions : null,
+                        hasBlockChanges ? sectionChanges : null,
+                        hasBlockEdges ? task.queuedEdgeChecksBlock : null
+                    );
                 }
 
                 if (processedChunks != null) {
@@ -455,6 +475,12 @@ public final class StarLightInterface {
                 }
 
                 task.onComplete.complete(null);
+
+                // Server-side budget check: stop if we've exceeded our time budget.
+                // Remaining tasks stay in the queue and will be processed next tick.
+                if (startTime != 0L && (System.nanoTime() - startTime) > MAX_PROPAGATION_TIME_NS) {
+                    break;
+                }
             }
         } finally {
             this.releaseSkyLightEngine(skyEngine);

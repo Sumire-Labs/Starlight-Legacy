@@ -301,6 +301,21 @@ public final class SWMRNibbleArray {
         }
     }
 
+    /**
+     * Copy visible data directly into destination array without allocation.
+     * Returns true if INIT state data was copied, false if nibble is in NULL/UNINIT/HIDDEN state.
+     * This avoids the allocation overhead of toVanillaNibble() (NibbleArray + byte[] clone).
+     */
+    public boolean copyVisibleDataInto(final byte[] dest) {
+        synchronized (this) {
+            if (this.stateVisible == INIT_STATE_INIT && this.storageVisible != null) {
+                System.arraycopy(this.storageVisible, 0, dest, 0, Math.min(dest.length, ARRAY_SIZE));
+                return true;
+            }
+            return false;
+        }
+    }
+
     /* x | (z << 4) | (y << 8) */
 
     public int getUpdating(final int x, final int y, final int z) {
