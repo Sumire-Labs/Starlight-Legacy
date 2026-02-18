@@ -97,6 +97,11 @@ public abstract class ChunkMixin implements ExtendedChunk {
         this.blockEmptinessMap = emptinessMap;
     }
 
+    @Override
+    public void setStarlightLightInitialized(final boolean value) {
+        this.starlight$lightInitialized = value;
+    }
+
     @Inject(method = "<init>(Lnet/minecraft/world/World;II)V", at = @At("RETURN"))
     private void onConstruct(World world, int x, int z, CallbackInfo ci) {
         this.blockNibbles = StarLightEngine.getFilledEmptyLight(world);
@@ -291,11 +296,9 @@ public abstract class ChunkMixin implements ExtendedChunk {
 
         if (this.world.isRemote) {
             // Client: light data comes from server via generateSkylightMap sync.
-            // Load empty section metadata.
+            // Load empty section metadata. Auto-sync in updateVisible() handles vanilla NibbleArrays.
             final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);
             lightEngine.loadInChunk(this.x, this.z, emptySections);
-            // Sync SWMR → vanilla NibbleArrays for Celeritas compatibility
-            lightEngine.syncSWMRToVanilla((Chunk)(Object)this);
             this.starlight$lightInitialized = true;
         } else {
             // Server side: clear any redundant light tasks queued before onLoad
@@ -303,20 +306,20 @@ public abstract class ChunkMixin implements ExtendedChunk {
             // lightChunk() will compute full lighting from scratch anyway.
             lightEngine.removeChunkTasks(this.x, this.z);
 
-            final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);
-
             if (this.starlight$isLitByStarlight()) {
                 // Chunk was loaded from disk with Starlight data (set by SaveUtil.loadLightHook)
+                final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);
                 lightEngine.loadInChunk(this.x, this.z, emptySections);
+                lightEngine.queueEdgeCheck(this.x, this.z);
+                this.starlight$lightInitialized = true;
             } else {
-                // Newly generated chunk or pre-Starlight save: compute full lighting
-                lightEngine.lightChunk((Chunk)(Object)this, emptySections);
+                // Newly generated chunk: defer lightChunk to the LightQueue.
+                // populate() runs after onLoad, so blockChange() calls during populate
+                // are skipped (lightInitialized=false) — avoiding redundant re-calculations.
+                // lightChunk() will compute full lighting on the final terrain.
+                // lightInitialized is set by the queued task when it executes.
+                lightEngine.queueLightChunk((Chunk)(Object)this);
             }
-
-            // C3 fix: queue edge checks instead of running them immediately.
-            // By the time propagateChanges() processes this, more neighbors should be loaded.
-            lightEngine.queueEdgeCheck(this.x, this.z);
-            this.starlight$lightInitialized = true;
         }
     }
 

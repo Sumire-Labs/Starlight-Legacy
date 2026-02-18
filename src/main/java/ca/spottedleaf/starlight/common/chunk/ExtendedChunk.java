@@ -15,4 +15,6 @@ public interface ExtendedChunk {
 
     boolean[] getBlockEmptinessMap();
     void setBlockEmptinessMap(final boolean[] emptinessMap);
+
+    void setStarlightLightInitialized(final boolean value);
 }

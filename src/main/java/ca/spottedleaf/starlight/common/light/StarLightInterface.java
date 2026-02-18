@@ -12,11 +12,8 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.NibbleArray;
-import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -365,51 +362,6 @@ public final class StarLightInterface {
     }
 
     /**
-     * Sync SWMR visible light data back to vanilla NibbleArrays in ExtendedBlockStorage.
-     * This is needed for compatibility with mods like Celeritas that read light from
-     * vanilla NibbleArrays directly (ExtendedBlockStorage.getBlockLight/getSkyLight),
-     * bypassing Chunk.getLightFor() which Starlight overwrites.
-     */
-    public void syncSWMRToVanilla(final Chunk chunk) {
-        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
-        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk)chunk).getBlockNibbles();
-        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk)chunk).getSkyNibbles();
-
-        for (int i = 0; i < sections.length; i++) {
-            if (sections[i] == null) continue;
-
-            final int lightIndex = i - this.minLightSection;
-            if (lightIndex < 0 || lightIndex >= blockNibbles.length) continue;
-
-            // Ensure visible buffers are up-to-date
-            blockNibbles[lightIndex].updateVisible();
-            if (this.hasSkyLight) {
-                skyNibbles[lightIndex].updateVisible();
-            }
-
-            // Block light — zero-copy: write directly into vanilla NibbleArray's backing array
-            final NibbleArray existingBlock = sections[i].getBlockLight();
-            if (existingBlock != null) {
-                if (!blockNibbles[lightIndex].copyVisibleDataInto(existingBlock.getData())) {
-                    // NULL, UNINIT, or HIDDEN → default block light = 0
-                    Arrays.fill(existingBlock.getData(), (byte)0);
-                }
-            }
-
-            // Sky light — zero-copy
-            if (this.hasSkyLight) {
-                final NibbleArray existingSky = sections[i].getSkyLight();
-                if (existingSky != null) {
-                    if (!skyNibbles[lightIndex].copyVisibleDataInto(existingSky.getData())) {
-                        // NULL, UNINIT, or HIDDEN → default sky light = 15 (0xFF = both nibbles 15)
-                        Arrays.fill(existingSky.getData(), (byte)0xFF);
-                    }
-                }
-            }
-        }
-    }
-
-    /**
      * Maximum time (nanoseconds) to spend on light propagation per server tick.
      * Prevents the "stop-and-burst" pattern where all queued edge checks process
      * in one tick, stalling chunk generation. Remaining tasks carry over to next tick.
@@ -425,9 +377,6 @@ public final class StarLightInterface {
         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
 
-        // Collect processed chunk coordinates for client-side vanilla sync
-        final ArrayList<Long> processedChunks = this.isClientSide ? new ArrayList<>() : null;
-
         // Server-side: apply time budget to prevent stalling chunk generation.
         // Client-side: process all tasks to keep rendering responsive.
         final long startTime = !this.isClientSide ? System.nanoTime() : 0L;
@@ -435,46 +384,7 @@ public final class StarLightInterface {
         try {
             LightQueue.ChunkTasks task;
             while ((task = this.lightQueue.removeFirstTask()) != null) {
-                if (task.lightTasks != null) {
-                    for (final Runnable run : task.lightTasks) {
-                        run.run();
-                    }
-                }
-
-                final long coordinate = task.chunkCoordinate;
-                final int chunkX = CoordinateUtils.getChunkX(coordinate);
-                final int chunkZ = CoordinateUtils.getChunkZ(coordinate);
-
-                final Set<BlockPos> positions = task.changedPositions;
-                final Boolean[] sectionChanges = task.changedSectionSet;
-                final boolean hasBlockChanges = !positions.isEmpty() || sectionChanges != null;
-                final boolean hasSkyEdges = task.queuedEdgeChecksSky != null;
-                final boolean hasBlockEdges = task.queuedEdgeChecksBlock != null;
-
-                // Use combined method to share a single cache setup/teardown per engine
-                // when both block changes and edge checks are needed for the same chunk.
-                if (skyEngine != null && (hasBlockChanges || hasSkyEdges)) {
-                    skyEngine.blocksChangedInChunkAndCheckEdges(
-                        this.world, chunkX, chunkZ,
-                        hasBlockChanges ? positions : null,
-                        hasBlockChanges ? sectionChanges : null,
-                        hasSkyEdges ? task.queuedEdgeChecksSky : null
-                    );
-                }
-                if (blockEngine != null && (hasBlockChanges || hasBlockEdges)) {
-                    blockEngine.blocksChangedInChunkAndCheckEdges(
-                        this.world, chunkX, chunkZ,
-                        hasBlockChanges ? positions : null,
-                        hasBlockChanges ? sectionChanges : null,
-                        hasBlockEdges ? task.queuedEdgeChecksBlock : null
-                    );
-                }
-
-                if (processedChunks != null) {
-                    processedChunks.add(coordinate);
-                }
-
-                task.onComplete.complete(null);
+                this.processTask(task, skyEngine, blockEngine);
 
                 // Server-side budget check: stop if we've exceeded our time budget.
                 // Remaining tasks stay in the queue and will be processed next tick.
@@ -486,22 +396,96 @@ public final class StarLightInterface {
             this.releaseSkyLightEngine(skyEngine);
             this.releaseBlockLightEngine(blockEngine);
         }
+    }
 
-        // Client-side: sync SWMR data back to vanilla NibbleArrays for Celeritas compatibility
-        if (processedChunks != null) {
-            for (final long coord : processedChunks) {
-                final int cx = CoordinateUtils.getChunkX(coord);
-                final int cz = CoordinateUtils.getChunkZ(coord);
-                final Chunk chunk = this.getAnyChunkNow(cx, cz);
-                if (chunk != null) {
-                    this.syncSWMRToVanilla(chunk);
-                    // Trigger render rebuild so Celeritas picks up the new light data
-                    this.world.markBlockRangeForRenderUpdate(
-                        cx << 4, 0, cz << 4,
-                        (cx << 4) + 15, 255, (cz << 4) + 15
-                    );
-                }
+    private void processTask(final LightQueue.ChunkTasks task,
+                             final SkyStarLightEngine skyEngine,
+                             final BlockStarLightEngine blockEngine) {
+        if (task.lightTasks != null) {
+            for (final Runnable run : task.lightTasks) {
+                run.run();
             }
+        }
+
+        final long coordinate = task.chunkCoordinate;
+        final int chunkX = CoordinateUtils.getChunkX(coordinate);
+        final int chunkZ = CoordinateUtils.getChunkZ(coordinate);
+
+        final Set<BlockPos> positions = task.changedPositions;
+        final Boolean[] sectionChanges = task.changedSectionSet;
+        final boolean hasBlockChanges = !positions.isEmpty() || sectionChanges != null;
+        final boolean hasSkyEdges = task.queuedEdgeChecksSky != null;
+        final boolean hasBlockEdges = task.queuedEdgeChecksBlock != null;
+
+        if (skyEngine != null && (hasBlockChanges || hasSkyEdges)) {
+            skyEngine.blocksChangedInChunkAndCheckEdges(
+                this.world, chunkX, chunkZ,
+                hasBlockChanges ? positions : null,
+                hasBlockChanges ? sectionChanges : null,
+                hasSkyEdges ? task.queuedEdgeChecksSky : null
+            );
+        }
+        if (blockEngine != null && (hasBlockChanges || hasBlockEdges)) {
+            blockEngine.blocksChangedInChunkAndCheckEdges(
+                this.world, chunkX, chunkZ,
+                hasBlockChanges ? positions : null,
+                hasBlockChanges ? sectionChanges : null,
+                hasBlockEdges ? task.queuedEdgeChecksBlock : null
+            );
+        }
+
+        task.onComplete.complete(null);
+    }
+
+    /**
+     * Ensure a specific chunk's pending light tasks are processed immediately.
+     * Used by SPacketChunkData to guarantee light data is correct before serialization.
+     */
+    public void ensureChunkLit(final int chunkX, final int chunkZ) {
+        final LightQueue.ChunkTasks task = this.lightQueue.extractChunkTask(chunkX, chunkZ);
+        if (task == null) {
+            return;
+        }
+
+        final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+
+        try {
+            this.processTask(task, skyEngine, blockEngine);
+        } finally {
+            this.releaseSkyLightEngine(skyEngine);
+            this.releaseBlockLightEngine(blockEngine);
+        }
+    }
+
+    /**
+     * Queue a newly generated chunk for deferred lighting.
+     * lightChunk + edge checks are added to the LightQueue and processed
+     * during propagateChanges() or ensureChunkLit().
+     */
+    public void queueLightChunk(final Chunk chunk) {
+        final int chunkX = chunk.x;
+        final int chunkZ = chunk.z;
+
+        // Add lightChunk as a deferred task.
+        // emptySections is computed at execution time (not capture time) so it sees
+        // the final terrain after populate() has placed trees, structures, etc.
+        this.lightQueue.queueChunkLighting(chunkX, chunkZ, () -> {
+            final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk(chunk);
+            this.lightChunk(chunk, emptySections);
+            ((ExtendedChunk)chunk).setStarlightLightInitialized(true);
+        });
+
+        // Add edge checks to the same ChunkTasks entry
+        final ShortOpenHashSet allSections = new ShortOpenHashSet(this.maxLightSection - this.minLightSection + 1);
+        for (int s = this.minLightSection; s <= this.maxLightSection; s++) {
+            allSections.add((short)s);
+        }
+        if (this.hasSkyLight) {
+            this.lightQueue.queueChunkSkylightEdgeCheck(chunkX, chunkZ, allSections);
+        }
+        if (this.hasBlockLight) {
+            this.lightQueue.queueChunkBlocklightEdgeCheck(chunkX, chunkZ, allSections);
         }
     }
 
@@ -584,6 +568,10 @@ public final class StarLightInterface {
                 return null;
             }
             return this.chunkTasks.removeFirst();
+        }
+
+        public synchronized ChunkTasks extractChunkTask(final int chunkX, final int chunkZ) {
+            return this.chunkTasks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ));
         }
 
         public static final class ChunkTasks {

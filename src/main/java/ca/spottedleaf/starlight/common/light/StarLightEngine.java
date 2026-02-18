@@ -12,6 +12,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.NibbleArray;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -255,6 +256,10 @@ public abstract class StarLightEngine {
                 updated = nibble.updateVisible();
             }
 
+            if (updated) {
+                this.syncNibbleToVanilla(index, nibble);
+            }
+
             if (this.isClientSide && (updated || this.notifyUpdateCache[index])) {
                 // Decode cache index to chunk section coordinates
                 final int localX = index % 5;
@@ -262,13 +267,64 @@ public abstract class StarLightEngine {
                 final int localY = index / 25;
                 final int sectionX = localX - this.chunkOffsetX;
                 final int sectionZ = localZ - this.chunkOffsetZ;
-                final int sectionY = localY + this.minLightSection;
+                final int sectionY = localY - this.chunkOffsetY;
 
                 // Notify the rendering system that this section's light data changed
                 world.markBlockRangeForRenderUpdate(
                         sectionX << 4, sectionY << 4, sectionZ << 4,
                         (sectionX << 4) | 15, (sectionY << 4) | 15, (sectionZ << 4) | 15
                 );
+            }
+        }
+    }
+
+    /**
+     * Sync a SWMR nibble's visible data to the corresponding vanilla NibbleArray
+     * in ExtendedBlockStorage. This ensures mods that read light directly from
+     * vanilla NibbleArrays (e.g. Celeritas) see correct data without manual sync calls.
+     */
+    protected final void syncNibbleToVanilla(final int cacheIndex, final SWMRNibbleArray nibble) {
+        // Decode cache index to chunk/section coordinates
+        final int localX = cacheIndex % 5;
+        final int localZ = (cacheIndex / 5) % 5;
+        final int localY = cacheIndex / 25;
+        final int chunkX = localX - this.chunkOffsetX;
+        final int chunkZ = localZ - this.chunkOffsetZ;
+        final int sectionY = localY - this.chunkOffsetY;
+
+        // Only block sections [minSection..maxSection] have ExtendedBlockStorage with NibbleArrays
+        if (sectionY < this.minSection || sectionY > this.maxSection) {
+            return;
+        }
+
+        final Chunk chunk = this.getChunkInCache(chunkX, chunkZ);
+        if (chunk == null) {
+            return;
+        }
+
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        final int sectionIndex = sectionY - this.minSection;
+        if (sectionIndex < 0 || sectionIndex >= sections.length || sections[sectionIndex] == null) {
+            return;
+        }
+
+        final NibbleArray vanillaNibble;
+        if (this.skylightPropagator) {
+            vanillaNibble = sections[sectionIndex].getSkyLight();
+        } else {
+            vanillaNibble = sections[sectionIndex].getBlockLight();
+        }
+
+        if (vanillaNibble == null) {
+            return;
+        }
+
+        if (!nibble.copyVisibleDataInto(vanillaNibble.getData())) {
+            // NULL/UNINIT: fill with defaults
+            if (this.skylightPropagator) {
+                Arrays.fill(vanillaNibble.getData(), (byte)0xFF); // sky default = 15
+            } else {
+                Arrays.fill(vanillaNibble.getData(), (byte)0x00); // block default = 0
             }
         }
     }
