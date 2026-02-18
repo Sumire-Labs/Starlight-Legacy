@@ -12,8 +12,11 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.NibbleArray;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -351,6 +354,61 @@ public final class StarLightInterface {
         this.lightQueue.removeChunk(chunkX, chunkZ);
     }
 
+    /**
+     * Sync SWMR visible light data back to vanilla NibbleArrays in ExtendedBlockStorage.
+     * This is needed for compatibility with mods like Celeritas that read light from
+     * vanilla NibbleArrays directly (ExtendedBlockStorage.getBlockLight/getSkyLight),
+     * bypassing Chunk.getLightFor() which Starlight overwrites.
+     */
+    public void syncSWMRToVanilla(final Chunk chunk) {
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk)chunk).getBlockNibbles();
+        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk)chunk).getSkyNibbles();
+
+        for (int i = 0; i < sections.length; i++) {
+            if (sections[i] == null) continue;
+
+            final int lightIndex = i - this.minLightSection;
+            if (lightIndex < 0 || lightIndex >= blockNibbles.length) continue;
+
+            // Ensure visible buffers are up-to-date
+            blockNibbles[lightIndex].updateVisible();
+            if (this.hasSkyLight) {
+                skyNibbles[lightIndex].updateVisible();
+            }
+
+            // Block light
+            final NibbleArray existingBlock = sections[i].getBlockLight();
+            if (existingBlock != null) {
+                if (blockNibbles[lightIndex].isInitialisedVisible()) {
+                    final NibbleArray vanillaBlock = blockNibbles[lightIndex].toVanillaNibble();
+                    if (vanillaBlock != null) {
+                        System.arraycopy(vanillaBlock.getData(), 0, existingBlock.getData(), 0, existingBlock.getData().length);
+                    }
+                } else {
+                    // NULL, UNINIT, or HIDDEN → default block light = 0
+                    Arrays.fill(existingBlock.getData(), (byte)0);
+                }
+            }
+
+            // Sky light
+            if (this.hasSkyLight) {
+                final NibbleArray existingSky = sections[i].getSkyLight();
+                if (existingSky != null) {
+                    if (skyNibbles[lightIndex].isInitialisedVisible()) {
+                        final NibbleArray vanillaSky = skyNibbles[lightIndex].toVanillaNibble();
+                        if (vanillaSky != null) {
+                            System.arraycopy(vanillaSky.getData(), 0, existingSky.getData(), 0, existingSky.getData().length);
+                        }
+                    } else {
+                        // NULL, UNINIT, or HIDDEN → default sky light = 15 (0xFF = both nibbles 15)
+                        Arrays.fill(existingSky.getData(), (byte)0xFF);
+                    }
+                }
+            }
+        }
+    }
+
     public void propagateChanges() {
         if (this.lightQueue.isEmpty()) {
             return;
@@ -358,6 +416,9 @@ public final class StarLightInterface {
 
         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+
+        // Collect processed chunk coordinates for client-side vanilla sync
+        final ArrayList<Long> processedChunks = this.isClientSide ? new ArrayList<>() : null;
 
         try {
             LightQueue.ChunkTasks task;
@@ -389,11 +450,32 @@ public final class StarLightInterface {
                     blockEngine.checkChunkEdges(this.world, chunkX, chunkZ, task.queuedEdgeChecksBlock);
                 }
 
+                if (processedChunks != null) {
+                    processedChunks.add(coordinate);
+                }
+
                 task.onComplete.complete(null);
             }
         } finally {
             this.releaseSkyLightEngine(skyEngine);
             this.releaseBlockLightEngine(blockEngine);
+        }
+
+        // Client-side: sync SWMR data back to vanilla NibbleArrays for Celeritas compatibility
+        if (processedChunks != null) {
+            for (final long coord : processedChunks) {
+                final int cx = CoordinateUtils.getChunkX(coord);
+                final int cz = CoordinateUtils.getChunkZ(coord);
+                final Chunk chunk = this.getAnyChunkNow(cx, cz);
+                if (chunk != null) {
+                    this.syncSWMRToVanilla(chunk);
+                    // Trigger render rebuild so Celeritas picks up the new light data
+                    this.world.markBlockRangeForRenderUpdate(
+                        cx << 4, 0, cz << 4,
+                        (cx << 4) + 15, 255, (cz << 4) + 15
+                    );
+                }
+            }
         }
     }
 

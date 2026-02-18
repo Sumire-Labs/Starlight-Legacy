@@ -115,8 +115,8 @@ public abstract class ChunkMixin implements ExtendedChunk {
             final SWMRNibbleArray[] nibbles = this.skyNibbles;
             if (nibbles == null || index < 0 || index >= nibbles.length) return 15;
             final SWMRNibbleArray nibble = nibbles[index];
-            // Null-state nibbles indicate empty sections above terrain → full sky light
-            if (nibble == null || nibble.isNullNibbleVisible()) return 15;
+            // NULL or UNINIT nibbles indicate empty/unprocessed sections → full sky light
+            if (nibble == null || nibble.isNullNibbleVisible() || nibble.isUninitialisedVisible()) return 15;
             return nibble.getVisible(x, y, z);
         } else {
             final SWMRNibbleArray[] nibbles = this.blockNibbles;
@@ -184,7 +184,7 @@ public abstract class ChunkMixin implements ExtendedChunk {
             final SWMRNibbleArray[] skyNibs = this.skyNibbles;
             if (skyNibs != null && index >= 0 && index < skyNibs.length) {
                 final SWMRNibbleArray nibble = skyNibs[index];
-                if (nibble == null || nibble.isNullNibbleVisible()) {
+                if (nibble == null || nibble.isNullNibbleVisible() || nibble.isUninitialisedVisible()) {
                     skyLight = 15;
                 } else {
                     skyLight = nibble.getVisible(x, y, z);
@@ -281,9 +281,11 @@ public abstract class ChunkMixin implements ExtendedChunk {
 
         if (this.world.isRemote) {
             // Client: light data comes from server via generateSkylightMap sync.
-            // Just load empty section metadata.
+            // Load empty section metadata.
             final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);
             lightEngine.loadInChunk(this.x, this.z, emptySections);
+            // Sync SWMR → vanilla NibbleArrays for Celeritas compatibility
+            lightEngine.syncSWMRToVanilla((Chunk)(Object)this);
         } else {
             // Server side
             final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk((Chunk)(Object)this);

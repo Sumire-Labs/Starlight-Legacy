@@ -6,6 +6,7 @@ import ca.spottedleaf.starlight.common.light.StarLightInterface;
 import ca.spottedleaf.starlight.common.light.StarLightLightingProvider;
 import ca.spottedleaf.starlight.common.util.WorldUtil;
 import net.minecraft.network.play.server.SPacketChunkData;
+import java.util.Arrays;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.NibbleArray;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
@@ -50,21 +51,34 @@ public abstract class SPacketChunkDataMixin {
             blockNibbles[lightIndex].updateVisible();
             skyNibbles[lightIndex].updateVisible();
 
-            // Copy SWMR visible data into the existing vanilla NibbleArrays
+            // Copy SWMR visible data into the existing vanilla NibbleArrays.
+            // For NULL/HIDDEN states, toVanillaNibble() returns null — fill with defaults
+            // so the client doesn't receive stale zeros.
+
+            // Block light
             final NibbleArray blockNibble = blockNibbles[lightIndex].toVanillaNibble();
-            if (blockNibble != null) {
-                final NibbleArray existing = sections[i].getBlockLight();
-                if (existing != null) {
-                    System.arraycopy(blockNibble.getData(), 0, existing.getData(), 0, existing.getData().length);
+            final NibbleArray existingBlock = sections[i].getBlockLight();
+            if (existingBlock != null) {
+                if (blockNibble != null) {
+                    System.arraycopy(blockNibble.getData(), 0, existingBlock.getData(), 0, existingBlock.getData().length);
+                } else {
+                    // NULL/HIDDEN → default block light = 0
+                    Arrays.fill(existingBlock.getData(), (byte)0);
                 }
             }
 
+            // Sky light
             if (hasSkyLight) {
-                final NibbleArray skyNibble = skyNibbles[lightIndex].toVanillaNibble();
-                if (skyNibble != null) {
-                    final NibbleArray existing = sections[i].getSkyLight();
-                    if (existing != null) {
-                        System.arraycopy(skyNibble.getData(), 0, existing.getData(), 0, existing.getData().length);
+                final NibbleArray existingSky = sections[i].getSkyLight();
+                if (existingSky != null) {
+                    if (skyNibbles[lightIndex].isInitialisedVisible()) {
+                        final NibbleArray skyNibble = skyNibbles[lightIndex].toVanillaNibble();
+                        if (skyNibble != null) {
+                            System.arraycopy(skyNibble.getData(), 0, existingSky.getData(), 0, existingSky.getData().length);
+                        }
+                    } else {
+                        // NULL, UNINIT, or HIDDEN → default sky light = 15 (0xFF)
+                        Arrays.fill(existingSky.getData(), (byte)0xFF);
                     }
                 }
             }

@@ -1,4 +1,6 @@
 # Starlight Legacy
+For most users, we recommend using Alfheim instead. This mod is experimental and may cause unexpected issues. 🫠🫠
+
 A mod that backports select features from Starlight 1.20.1, including some functionality from Alfheim. This is a personal hobby project and may not be actively maintained.
 
 ## Description
