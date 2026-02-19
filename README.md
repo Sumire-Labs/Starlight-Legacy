@@ -1,3 +1,6 @@
+# ⚠️Major rewrite in progress. The current base is deprecated and should not be used.⚠️
+
+
 # Starlight Legacy
 For most users, we recommend using Alfheim instead. This mod is experimental and may cause unexpected issues. 🫠🫠
 
