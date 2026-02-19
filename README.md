@@ -1,104 +1,99 @@
 # Starlight Legacy
-For most users, we recommend using Alfheim instead. This mod is experimental and may cause unexpected issues. 🫠🫠
 
-A mod that backports select features from Starlight 1.20.1, including some functionality from Alfheim. This is a personal hobby project and may not be actively maintained.
+This is a backport of some features from Starlight 1.16.5 and Moonrise/ScalableLux to 1.12.2. Since this is purely a personal hobby project, please be aware that it may have some rough edges! 🫠
+No benchmarking data has been collected.
 
-## Description
-A mod that attempts to backport Starlight to 1.12.2.
-No benchmarks have been conducted, so the actual performance impact is unknown.
+Therefore, unless there's a specific reason not to, please use Alfheim when encountering this repository.
 
 ## Requirements
-- CleanroomLoader
+
+- [CleanroomLoader](https://github.com/CleanroomMC/Cleanroom) 0.3.31-alpha or later
 
 ## Incompatibilities
+
 The following mods are not compatible:
 - **CubicChunks**
+- **Phosphor** / **Hesperus**
+- **Alfheim**
 
-# CleanroomModTemplate
-Mod development template for Cleanroom, uses Unimined
+## Architecture
 
-## Usage
-### Choose Branch
-Choose mixin branch if you want to use Mixin.
+### Core Algorithm
 
-Use scala and kotlin branch if you want to write in non-Java language. 
+Starlight replaces vanilla Minecraft's iterative light propagation with a **BFS (Breadth-First Search) based algorithm**. Instead of processing light updates one block at a time with potential cascading recalculations, Starlight processes all increases and decreases in two efficient BFS passes:
 
-There are 4 branches available:
-- main
-- mixin
-- scala
-- kotlin
+1. **Decrease pass**: Propagates light removal outward from removed sources, collecting boundary values
+2. **Increase pass**: Propagates light from all sources (new + boundary), writing final values in one sweep
 
-If you want to use non-main branches, after clicked *Create a new repository* under *Use this template*, check the *Include all branches* checkbox.
+This approach eliminates the redundant recalculations that make vanilla lighting slow, resulting in O(n) complexity where n is the number of affected blocks.
 
-### gradle.properties
-Edit gradle.properties and set your modid, mod version, mod name, package, etc.
+### Dual Engine Design
 
-If you are writing a coremod, remember to set related settings to true.
+- **BlockStarLightEngine** - Handles block light (torches, lava, glowstone, etc.)
+- **SkyStarLightEngine** - Handles sky light with special column-based optimizations for vertical propagation
+- **StarLightInterface** - Coordinates both engines, manages the light task queue, and handles vanilla synchronization
 
-### Reference Class
-Mostly used to store mod version so you can fill it to `@Mod`.
+### SWMR (Single Writer Multi Reader) Data
 
-You should change its location to fit your new package name.
+Light data is stored in `SWMRNibbleArray` instead of vanilla's `NibbleArray`. This provides:
+- **Dual-buffer design**: Separate `updating` and `visible` data paths
+- Light engine writes to `updating` during computation
+- Readers (rendering, mod compat) read from `visible` via synchronized access
+- `updateVisible()` atomically publishes computed data to the visible buffer
 
-You can find it under `src/main/java-templates`.
+### Light Read Redirect
 
-### Dependencies
-You can find dependency script in `gradle/scripts/dependencies.gradle`.
+All vanilla light read methods (`World.getLightFor()`, `World.getLight()`, `World.getLightFromNeighborsFor()`) are redirected via Mixin to read directly from SWMR data through `StarLightInterface`. This ensures consistent, up-to-date light values without waiting for vanilla NibbleArray sync.
 
-No more `rfg.deobf()` or `fg.deobf` for mods, you should use `modImplementation`, `modCompileOnly` and `modRuntimeOnly`.
+### Vanilla Synchronization
 
-### Shadow
-You can use `shadow` in dependency declaration to shadow libraries.
+For compatibility with mods that read light through `ChunkCache` or `ExtendedBlockStorage` (which bypass `World.getLightFor()`), SWMR data is synced to vanilla NibbleArrays:
+- After `propagateChanges()` completes (tracks affected chunks via `LongOpenHashSet`)
+- Before chunk data packets are sent to clients
+- After `ensureChunkLit()` during chunk generation
 
-### Contain
-You can use `contain` in dependency declaration to add non-mod libraries to artifact jar.
+## Features Incorporated
 
-They will be extracted and loaded automatically in production.
+### From Starlight 1.16.5
 
-### Mixin
-MixinBooter API is deprecated in Cleanroom.
+- Core BFS light propagation algorithm
+- SkyStarLightEngine with column-based sky light optimization (heightmap tracking, `extrudeLower`)
+- BlockStarLightEngine with emission-aware source detection
+- SWMRNibbleArray dual-buffer data structure
+- 5x5 chunk cache for neighbor access during propagation
+- `KnownTransparenciesData` (bitset) for fast opacity lookups per chunk section
+- Light task queue with per-chunk batching (`LightQueue.ChunkTasks`)
+- `VariableBlockLightHandler` for mod-provided custom light sources
+- Client-side vanilla NibbleArray to SWMR direct conversion (no BFS re-computation)
 
-Current approach is to set json configs in `MixinConfigs` manifest key, which will be read by Cleanroom.
+### From Moonrise & ScalableLux
 
-You don't need to set tons of json too. If you aren't mixining into Forge, all you need is two jsons for `DEFAULT` hase and `MOD` Phase.
+- **`extrudeLower` fix**: Corrected byte-level copy range calculation for sky light extrusion below world minimum
+- **Volatile `storageVisible`**: Ensures cross-thread visibility of SWMR visible data
+- **`FlatBitsetUtil`**: Optimized bitset utility for tracking empty/non-empty sections and edge conditions
 
-All you need is to put `IEarlyMixinLoader` mixin to `DEFAULT` json, and, mixins from `ILateMixinLoader` to `MOD` json.
+- **SWMR byte pool size limit**: `POOL_MAX_SIZE = 128` prevents unbounded memory growth from pooled byte arrays
+- **Sky light early exit**: When `skyLight >= 15` in `World.getLight()`, returns immediately without checking block light
 
-As for calling `Loader.isModLoaded()`, just fit an `IMixinConfigPlugin` to your json and call in `shouldApply()`
+### Backport-Specific Adaptations
 
-There are some example mixins and a HEI dependency in mixin fork, remove them before writing yours.
+- **Single-threaded design**: 1.12.2 is single-threaded, so parallel processing from modern versions is not applicable. The light engine runs synchronously.
+- **Server-side immediate processing**: `propagateChanges()` drains all queued light tasks without a time budget, ensuring lighting is always complete before chunk packets are sent.
+- **Client-side budget processing**: Light updates on the client are processed with an 8ms per-tick budget to avoid frame drops.
+- **Chunk generation integration**: `ensureChunkLit()` calls `lightChunk()` for full BFS computation, then removes any redundant queued tasks via `removeChunkTasks()`.
+- **Renderer notification**: `updateVisible()` calls `markBlockRangeForRenderUpdate()` on the client to trigger re-renders for affected sections.
 
-### Access Transformer
-You MUST write AT file in MCP name. It will be remapped back to SRG name in artifact jar.
+## License
 
-Rename AT file name to your modid before using it. There's an example entry in AT file, remove it if you want to use AT. 
+This project is licensed under **LGPL-3.0-or-later** (GNU Lesser General Public License v3.0 or later).
 
-**WARNING**: ATs from dependency won't be applied to vanilla source. 
+- `COPYING` - GNU General Public License v3.0
+- `COPYING.LESSER` - GNU Lesser General Public License v3.0 (additional permissions)
 
-### Source Code with Comments
-Run `genSources` task in gradle.
+Portions derived from [Moonrise](https://github.com/Tuinity/Moonrise) (GPL-3.0) are used under GPL-3.0 compatibility with LGPL-3.0.
 
-If you want to `find usage` from vanilla like RFG, just change the scope in IntelliJ settings.
+## Credits
 
-### Running Client or Server
-You **MUST** add mods by using `modImplementation` or `modRuntimeOnly`, or mapping and ATs will break.
-
-If you are using IntelliJ, **DO NOT** use the `Minecraft Client` configure with a blue icon. Just use the `runClient` Gradle task.
-
-### GitHub Action
-This template comes with three workflows.
-
-`build.yml` will build and upload artifact for every commit. Useful when you want to provide test builds for debugging.
-
-`release.yml` will make a GitHub release if you pushed a git tag.
-
-`release-to-cf-mr.yml` can publish your mod to CurseForge and/or Modrinth.
-
-You need to fill in your project IDs and configure your tokens in GitHub repository first.
-
-By default, you will need to manually trigger the workflow in web page, but you can also enable tag triggering by merging it into `release.yml`.
-
-### Credit
-Thanks @Karnatour for fixing shadow plugin
-Thanks @ghostflyby for making kotlin branch
+- **Spottedleaf** - Original Starlight author
+- **Moonrise** contributors - `extrudeLower` fix, volatile visibility, `FlatBitsetUtil`
+- **ScalableLux** contributors - Pool size limit, sky light early exit pattern
