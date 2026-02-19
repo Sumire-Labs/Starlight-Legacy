@@ -7,8 +7,6 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Set;
 
 public final class BlockStarLightEngine extends StarLightEngine {
@@ -177,76 +175,58 @@ public final class BlockStarLightEngine extends StarLightEngine {
         this.performLightDecrease(lightAccess);
     }
 
-    protected List<BlockPos> getSources(final World lightAccess, final Chunk chunk) {
-        final List<BlockPos> sources = new ArrayList<>();
-
+    @Override
+    public void lightChunk(final World lightAccess, final Chunk chunk, final boolean needsEdgeChecks) {
+        // Inlined source discovery: find and queue all light-emitting blocks directly,
+        // avoiding ArrayList + BlockPos allocations and redundant block state lookups.
+        final int emittedMask = this.emittedLightMask;
         final int offX = chunk.x << 4;
         final int offZ = chunk.z << 4;
+        final int encodeOffset = this.coordinateOffset;
 
         final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
         for (int sectionY = this.minSection; sectionY <= this.maxSection; ++sectionY) {
             final ExtendedBlockStorage section = sections[sectionY - this.minSection];
             if (section == null || section.isEmpty()) {
-                // no sources in empty sections
                 continue;
             }
             final int offY = sectionY << 4;
 
-            // 1.12.2: no PalettedContainer, iterate all blocks in the section
             for (int y = 0; y < 16; ++y) {
                 for (int z = 0; z < 16; ++z) {
                     for (int x = 0; x < 16; ++x) {
                         final IBlockState state = section.getData().get(x, y, z);
-                        this.mutablePos1.setPos(offX | x, offY | y, offZ | z);
-                        if (state.getLightValue(lightAccess, this.mutablePos1) <= 0) {
+                        final int worldX = offX | x;
+                        final int worldY = offY | y;
+                        final int worldZ = offZ | z;
+                        this.mutablePos1.setPos(worldX, worldY, worldZ);
+                        final int emittedLight = state.getLightValue(lightAccess, this.mutablePos1) & emittedMask;
+
+                        if (emittedLight <= 0) {
                             continue;
                         }
 
-                        sources.add(new BlockPos(offX | x, offY | y, offZ | z));
+                        if (emittedLight <= this.getLightLevel(worldX, worldY, worldZ)) {
+                            continue;
+                        }
+
+                        this.appendToIncreaseQueue(
+                                ((worldX + (worldZ << 6) + (worldY << (6 + 6)) + encodeOffset) & ((1L << (6 + 6 + 16)) - 1))
+                                        | (emittedLight & 0xFL) << (6 + 6 + 16)
+                                        | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
+                        );
+
+                        this.setLightLevel(worldX, worldY, worldZ, emittedLight);
                     }
                 }
             }
         }
 
-        return sources;
-    }
-
-    @Override
-    public void lightChunk(final World lightAccess, final Chunk chunk, final boolean needsEdgeChecks) {
-        // setup sources
-        final int emittedMask = this.emittedLightMask;
-        final List<BlockPos> positions = this.getSources(lightAccess, chunk);
-        for (int i = 0, len = positions.size(); i < len; ++i) {
-            final BlockPos pos = positions.get(i);
-            final IBlockState blockState = this.getBlockState(pos.getX(), pos.getY(), pos.getZ());
-            final int emittedLight = blockState.getLightValue(lightAccess, pos) & emittedMask;
-
-            if (emittedLight <= this.getLightLevel(pos.getX(), pos.getY(), pos.getZ())) {
-                // some other source is brighter
-                continue;
-            }
-
-            this.appendToIncreaseQueue(
-                    ((pos.getX() + (pos.getZ() << 6) + (pos.getY() << (6 + 6)) + this.coordinateOffset) & ((1L << (6 + 6 + 16)) - 1))
-                            | (emittedLight & 0xFL) << (6 + 6 + 16)
-                            | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
-                            // isConditionallyFullOpaque is always false in 1.12.2
-            );
-
-
-            // propagation wont set this for us
-            this.setLightLevel(pos.getX(), pos.getY(), pos.getZ(), emittedLight);
-        }
-
         if (needsEdgeChecks) {
-            // not required to propagate here, but this will reduce the hit of the edge checks
             this.performLightIncrease(lightAccess);
-
-            // verify neighbour edges
             this.checkChunkEdges(lightAccess, chunk, this.minLightSection, this.maxLightSection);
         } else {
             this.propagateNeighbourLevels(lightAccess, chunk, this.minLightSection, this.maxLightSection);
-
             this.performLightIncrease(lightAccess);
         }
     }

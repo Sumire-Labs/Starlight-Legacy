@@ -9,16 +9,13 @@ import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
 import it.unimi.dsi.fastutil.shorts.ShortCollection;
 import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
-import java.util.function.IntConsumer;
+import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 
 public final class StarLightInterface {
 
@@ -342,18 +339,38 @@ public final class StarLightInterface {
     }
 
     public void queueEdgeCheck(final int chunkX, final int chunkZ) {
-        // Use section-specific edge check fields instead of a Runnable so that
-        // propagateChanges() can combine edge checks with block changes in a single
-        // cache setup/teardown cycle (avoiding redundant 5x5 chunk cache operations).
-        final ShortOpenHashSet allSections = new ShortOpenHashSet(this.maxLightSection - this.minLightSection + 1);
-        for (int s = this.minLightSection; s <= this.maxLightSection; s++) {
-            allSections.add((short)s);
+        // Only queue edge checks for sections near non-empty content.
+        // Checking all 18 sections is wasteful when most chunks have only a few
+        // non-empty sections (surface-level terrain).
+        final Chunk chunk = this.getAnyChunkNow(chunkX, chunkZ);
+        if (chunk == null) {
+            return;
         }
+
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        final ShortOpenHashSet sectionsToCheck = new ShortOpenHashSet();
+        for (int s = this.minSection; s <= this.maxSection; s++) {
+            final int idx = s - this.minSection;
+            if (idx >= 0 && idx < sections.length && sections[idx] != null && !sections[idx].isEmpty()) {
+                // Include this section and its vertical neighbors for edge checking
+                for (int dy = -1; dy <= 1; dy++) {
+                    final int sy = s + dy;
+                    if (sy >= this.minLightSection && sy <= this.maxLightSection) {
+                        sectionsToCheck.add((short) sy);
+                    }
+                }
+            }
+        }
+
+        if (sectionsToCheck.isEmpty()) {
+            return;
+        }
+
         if (this.hasSkyLight) {
-            this.lightQueue.queueChunkSkylightEdgeCheck(chunkX, chunkZ, allSections);
+            this.lightQueue.queueChunkSkylightEdgeCheck(chunkX, chunkZ, sectionsToCheck);
         }
         if (this.hasBlockLight) {
-            this.lightQueue.queueChunkBlocklightEdgeCheck(chunkX, chunkZ, allSections);
+            this.lightQueue.queueChunkBlocklightEdgeCheck(chunkX, chunkZ, sectionsToCheck);
         }
     }
 
@@ -362,12 +379,14 @@ public final class StarLightInterface {
     }
 
     /**
-     * Maximum time (nanoseconds) to spend on light propagation per server tick.
-     * Prevents the "stop-and-burst" pattern where all queued edge checks process
-     * in one tick, stalling chunk generation. Remaining tasks carry over to next tick.
-     * Client-side always processes all tasks (no budget) to keep rendering responsive.
+     * Maximum time (nanoseconds) to spend on light propagation per frame.
+     * Only used on the client to prevent lag spikes during batch chunk loading.
+     * Server has no budget — all tasks are drained immediately. In 1.12.2 there
+     * is no threaded light engine, so deferring work with a budget only delays it
+     * until ensureChunkLit() forces synchronous processing. Draining everything
+     * at once amortizes engine setup/teardown across all queued chunks.
      */
-    private static final long MAX_PROPAGATION_TIME_NS = 5_000_000L; // 5ms
+    private static final long MAX_PROPAGATION_TIME_NS_CLIENT = 8_000_000L;  // 8ms
 
     public void propagateChanges() {
         if (this.lightQueue.isEmpty()) {
@@ -377,19 +396,20 @@ public final class StarLightInterface {
         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
         final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
 
-        // Server-side: apply time budget to prevent stalling chunk generation.
-        // Client-side: process all tasks to keep rendering responsive.
-        final long startTime = !this.isClientSide ? System.nanoTime() : 0L;
-
         try {
             LightQueue.ChunkTasks task;
-            while ((task = this.lightQueue.removeFirstTask()) != null) {
-                this.processTask(task, skyEngine, blockEngine);
-
-                // Server-side budget check: stop if we've exceeded our time budget.
-                // Remaining tasks stay in the queue and will be processed next tick.
-                if (startTime != 0L && (System.nanoTime() - startTime) > MAX_PROPAGATION_TIME_NS) {
-                    break;
+            if (this.isClientSide) {
+                final long startTime = System.nanoTime();
+                while ((task = this.lightQueue.removeFirstTask()) != null) {
+                    this.processTask(task, skyEngine, blockEngine);
+                    if ((System.nanoTime() - startTime) > MAX_PROPAGATION_TIME_NS_CLIENT) {
+                        break;
+                    }
+                }
+            } else {
+                // Server: drain all pending tasks immediately
+                while ((task = this.lightQueue.removeFirstTask()) != null) {
+                    this.processTask(task, skyEngine, blockEngine);
                 }
             }
         } finally {
@@ -433,34 +453,21 @@ public final class StarLightInterface {
                 hasBlockEdges ? task.queuedEdgeChecksBlock : null
             );
         }
-
-        task.onComplete.complete(null);
     }
 
     /**
-     * Ensure a specific chunk's pending light tasks are processed immediately.
-     * Used by SPacketChunkData to guarantee light data is correct before serialization.
+     * Ensure pending light tasks are processed before chunk serialization.
+     * Drains ALL pending tasks (not just the target chunk) so that subsequent
+     * calls in the same tick (batch chunk sends) find an empty queue and return
+     * immediately, avoiding repeated engine setup/teardown overhead.
      */
     public void ensureChunkLit(final int chunkX, final int chunkZ) {
-        final LightQueue.ChunkTasks task = this.lightQueue.extractChunkTask(chunkX, chunkZ);
-        if (task == null) {
-            return;
-        }
-
-        final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
-        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
-
-        try {
-            this.processTask(task, skyEngine, blockEngine);
-        } finally {
-            this.releaseSkyLightEngine(skyEngine);
-            this.releaseBlockLightEngine(blockEngine);
-        }
+        this.propagateChanges();
     }
 
     /**
      * Queue a newly generated chunk for deferred lighting.
-     * lightChunk + edge checks are added to the LightQueue and processed
+     * The lightChunk task is added to the LightQueue and processed
      * during propagateChanges() or ensureChunkLit().
      */
     public void queueLightChunk(final Chunk chunk) {
@@ -470,23 +477,15 @@ public final class StarLightInterface {
         // Add lightChunk as a deferred task.
         // emptySections is computed at execution time (not capture time) so it sees
         // the final terrain after populate() has placed trees, structures, etc.
+        // Edge checks are NOT queued here: light() already handles neighbor
+        // initialization via handleEmptySectionChanges(), and neighbor chunks will
+        // queue their own edge checks when they load. This cuts per-chunk work
+        // from 4 setupCaches cycles to 2 (~50% less overhead).
         this.lightQueue.queueChunkLighting(chunkX, chunkZ, () -> {
             final Boolean[] emptySections = StarLightEngine.getEmptySectionsForChunk(chunk);
             this.lightChunk(chunk, emptySections);
             ((ExtendedChunk)chunk).setStarlightLightInitialized(true);
         });
-
-        // Add edge checks to the same ChunkTasks entry
-        final ShortOpenHashSet allSections = new ShortOpenHashSet(this.maxLightSection - this.minLightSection + 1);
-        for (int s = this.minLightSection; s <= this.maxLightSection; s++) {
-            allSections.add((short)s);
-        }
-        if (this.hasSkyLight) {
-            this.lightQueue.queueChunkSkylightEdgeCheck(chunkX, chunkZ, allSections);
-        }
-        if (this.hasBlockLight) {
-            this.lightQueue.queueChunkBlocklightEdgeCheck(chunkX, chunkZ, allSections);
-        }
     }
 
     public static final class LightQueue {
@@ -554,12 +553,8 @@ public final class StarLightInterface {
         }
 
         public void removeChunk(final int chunkX, final int chunkZ) {
-            final ChunkTasks tasks;
             synchronized (this) {
-                tasks = this.chunkTasks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ));
-            }
-            if (tasks != null) {
-                tasks.onComplete.complete(null);
+                this.chunkTasks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ));
             }
         }
 
@@ -570,10 +565,6 @@ public final class StarLightInterface {
             return this.chunkTasks.removeFirst();
         }
 
-        public synchronized ChunkTasks extractChunkTask(final int chunkX, final int chunkZ) {
-            return this.chunkTasks.remove(CoordinateUtils.getChunkKey(chunkX, chunkZ));
-        }
-
         public static final class ChunkTasks {
 
             public final Set<BlockPos> changedPositions = new ObjectOpenHashSet<>();
@@ -581,8 +572,6 @@ public final class StarLightInterface {
             public ShortOpenHashSet queuedEdgeChecksSky;
             public ShortOpenHashSet queuedEdgeChecksBlock;
             public List<Runnable> lightTasks;
-
-            public final CompletableFuture<Void> onComplete = new CompletableFuture<>();
 
             public final long chunkCoordinate;
 

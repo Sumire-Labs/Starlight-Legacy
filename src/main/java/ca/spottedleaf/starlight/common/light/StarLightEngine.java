@@ -320,11 +320,64 @@ public abstract class StarLightEngine {
         }
 
         if (!nibble.copyVisibleDataInto(vanillaNibble.getData())) {
-            // NULL/UNINIT: fill with defaults
+            // No INIT data to copy. Determine correct default based on state:
             if (this.skylightPropagator) {
-                Arrays.fill(vanillaNibble.getData(), (byte)0xFF); // sky default = 15
+                // UNINIT = underground section not reached by BFS → no sky light (0)
+                // NULL/other = above-terrain de-initialized section → full sky light (15)
+                if (nibble.isUninitialisedVisible()) {
+                    Arrays.fill(vanillaNibble.getData(), (byte)0x00);
+                } else {
+                    Arrays.fill(vanillaNibble.getData(), (byte)0xFF);
+                }
             } else {
                 Arrays.fill(vanillaNibble.getData(), (byte)0x00); // block default = 0
+            }
+        }
+    }
+
+    /**
+     * Explicitly sync ALL sections of the given chunk to vanilla NibbleArrays,
+     * regardless of dirty state. Called after light() to cover non-dirty NULL
+     * sections (empty above-terrain) that updateVisible() skips.
+     * Reads from the chunk's nibble arrays (set by setNibbles), not the cache.
+     */
+    protected final void syncChunkNibblesToVanilla(final Chunk chunk) {
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        final SWMRNibbleArray[] nibbles = this.getNibblesOnChunk(chunk);
+
+        for (int sectionY = this.minSection; sectionY <= this.maxSection; ++sectionY) {
+            final int sectionIndex = sectionY - this.minSection;
+            if (sectionIndex < 0 || sectionIndex >= sections.length || sections[sectionIndex] == null) {
+                continue;
+            }
+
+            final int nibbleIndex = sectionY - this.minLightSection;
+            if (nibbleIndex < 0 || nibbleIndex >= nibbles.length) {
+                continue;
+            }
+
+            final SWMRNibbleArray nibble = nibbles[nibbleIndex];
+
+            final NibbleArray vanillaNibble;
+            if (this.skylightPropagator) {
+                vanillaNibble = sections[sectionIndex].getSkyLight();
+            } else {
+                vanillaNibble = sections[sectionIndex].getBlockLight();
+            }
+            if (vanillaNibble == null) {
+                continue;
+            }
+
+            if (nibble == null || !nibble.copyVisibleDataInto(vanillaNibble.getData())) {
+                if (this.skylightPropagator) {
+                    if (nibble != null && nibble.isUninitialisedVisible()) {
+                        Arrays.fill(vanillaNibble.getData(), (byte)0x00);
+                    } else {
+                        Arrays.fill(vanillaNibble.getData(), (byte)0xFF);
+                    }
+                } else {
+                    Arrays.fill(vanillaNibble.getData(), (byte)0x00);
+                }
             }
         }
     }
@@ -1022,6 +1075,7 @@ public abstract class StarLightEngine {
             this.lightChunk(world, chunk, true);
             this.setNibbles(chunk, nibbles);
             this.updateVisible(world);
+            this.syncChunkNibblesToVanilla(chunk);
         } finally {
             this.destroyCaches();
         }
