@@ -27,7 +27,7 @@ public abstract class NetHandlerPlayClientMixin {
     /**
      * When a chunk data packet is received, initialize starlight data for the chunk.
      * We hook after the chunk has been loaded into the client world.
-     *
+     * <p>
      * Instead of re-computing lighting from scratch (full BFS), we convert the
      * server's already-correct vanilla NibbleArrays into SWMR data.
      */
@@ -51,12 +51,12 @@ public abstract class NetHandlerPlayClientMixin {
         final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
         for (final ExtendedBlockStorage section : sections) {
             if (section != null && section != Chunk.NULL_BLOCK_STORAGE) {
-                ((ExtendedChunkSection)section).starlight$initKnownTransparenciesData();
+                ((ExtendedChunkSection) section).starlight$initKnownTransparenciesData();
             }
         }
 
         // Initialize SWMR nibble arrays
-        final ExtendedChunk exChunk = (ExtendedChunk)chunk;
+        final ExtendedChunk exChunk = (ExtendedChunk) chunk;
         final SWMRNibbleArray[] blockNibbles = StarLightEngine.getFilledEmptyLight(this.world);
         final SWMRNibbleArray[] skyNibbles = StarLightEngine.getFilledEmptyLight(this.world);
 

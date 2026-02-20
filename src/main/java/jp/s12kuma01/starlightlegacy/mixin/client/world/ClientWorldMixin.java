@@ -24,12 +24,13 @@ public abstract class ClientWorldMixin implements ExtendedWorld {
 
     @Inject(method = "<init>*", at = @At("RETURN"))
     private void onInit(final CallbackInfo ci) {
-        final World self = (World)(Object)this;
+        final World self = (World) (Object) this;
         final LightChunkGetter getter = new LightChunkGetter() {
             @Override
             public Chunk getChunkForLighting(final int chunkX, final int chunkZ) {
                 return ClientWorldMixin.this.getChunkAtImmediately(chunkX, chunkZ);
             }
+
             @Override
             public World getWorld() {
                 return self;
@@ -41,7 +42,7 @@ public abstract class ClientWorldMixin implements ExtendedWorld {
 
     @Override
     public Chunk getChunkAtImmediately(final int chunkX, final int chunkZ) {
-        final World self = (World)(Object)this;
+        final World self = (World) (Object) this;
         // On client, use the chunk provider to get already-loaded chunks
         if (self.getChunkProvider().isChunkGeneratedAt(chunkX, chunkZ)) {
             return self.getChunkProvider().provideChunk(chunkX, chunkZ);

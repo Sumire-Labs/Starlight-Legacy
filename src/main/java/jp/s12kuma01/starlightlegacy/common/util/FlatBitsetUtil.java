@@ -6,6 +6,9 @@ public final class FlatBitsetUtil {
     private static final long ALL_SET = -1L;
     private static final int BITS_PER_LONG = Long.SIZE;
 
+    private FlatBitsetUtil() {
+    }
+
     // from inclusive
     // to exclusive
     public static int firstSet(final long[] bitset, final int from, final int to) {
@@ -17,7 +20,7 @@ public final class FlatBitsetUtil {
         int bitIdx = from & ~(BITS_PER_LONG - 1);
 
         long tmp = bitset[bitsetIdx] & (ALL_SET << from);
-        for (;;) {
+        for (; ; ) {
             if (tmp != 0L) {
                 final int ret = bitIdx | Long.numberOfTrailingZeros(tmp);
                 return ret >= to ? -1 : ret;
@@ -44,7 +47,7 @@ public final class FlatBitsetUtil {
         int bitIdx = from & ~(BITS_PER_LONG - 1);
 
         long tmp = (~bitset[bitsetIdx]) & (ALL_SET << from);
-        for (;;) {
+        for (; ; ) {
             if (tmp != 0L) {
                 final int ret = bitIdx | Long.numberOfTrailingZeros(tmp);
                 return ret >= to ? -1 : ret;
@@ -98,6 +101,4 @@ public final class FlatBitsetUtil {
     public static boolean isRangeSet(final long[] bitset, final int from, final int to) {
         return firstClear(bitset, from, to) == -1;
     }
-
-    private FlatBitsetUtil() {}
 }

@@ -25,7 +25,7 @@ public abstract class BlockStateBaseMixin implements ExtendedAbstractBlockState 
             return;
         }
 
-        final IBlockState self = (IBlockState)(Object)this;
+        final IBlockState self = (IBlockState) (Object) this;
 
         // A block is "conditionally full opaque" if it is opaque but has per-face transparency.
         // In 1.12.2, useNeighborBrightness() is the best proxy for "has directional light behavior"

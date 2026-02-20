@@ -5,6 +5,10 @@ public final class IntegerUtil {
     public static final int HIGH_BIT_U32 = Integer.MIN_VALUE;
     public static final long HIGH_BIT_U64 = Long.MIN_VALUE;
 
+    private IntegerUtil() {
+        throw new RuntimeException();
+    }
+
     public static int ceilLog2(final int value) {
         return Integer.SIZE - Integer.numberOfLeadingZeros(value - 1);
     }
@@ -69,9 +73,5 @@ public final class IntegerUtil {
     public static long branchlessAbs(final long val) {
         final long mask = val >> (Long.SIZE - 1);
         return (mask ^ val) - mask;
-    }
-
-    private IntegerUtil() {
-        throw new RuntimeException();
     }
 }

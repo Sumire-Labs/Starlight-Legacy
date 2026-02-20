@@ -36,57 +36,19 @@ public abstract class AnvilChunkLoaderMixin {
     @Unique
     private static final String STARLIGHT_VERSION_TAG = "starlightlegacy.light_version";
 
-    /**
-     * Force-process all pending light updates before saving.
-     */
-    @Inject(method = "saveChunk", at = @At("HEAD"))
-    private void onSaveChunk(final World world, final Chunk chunk, final CallbackInfo ci) {
-        final StarLightInterface lightEngine = ((ExtendedWorld)world).getLightEngine();
-        if (lightEngine != null) {
-            lightEngine.propagateChanges();
-        }
-    }
-
-    /**
-     * Inject starlight data on save.
-     */
-    @Inject(method = "writeChunkToNBT", at = @At("RETURN"))
-    private void onWriteChunkToNBT(final Chunk chunk, final World world, final NBTTagCompound compound, final CallbackInfo ci) {
-        try {
-            starlight$saveLightData(chunk, world, compound);
-        } catch (final Exception ex) {
-            STARLIGHT_LOGGER.warn("Failed to inject starlight data into save for chunk (" + chunk.x + ", " + chunk.z + "), light will be recalculated on next load", ex);
-        }
-    }
-
-    /**
-     * Load starlight data on chunk read.
-     */
-    @Inject(method = "readChunkFromNBT", at = @At("RETURN"))
-    private void onReadChunkFromNBT(final World world, final NBTTagCompound compound, final CallbackInfoReturnable<Chunk> cir) {
-        try {
-            final Chunk chunk = cir.getReturnValue();
-            if (chunk != null) {
-                starlight$loadLightData(chunk, world, compound);
-            }
-        } catch (final Exception ex) {
-            STARLIGHT_LOGGER.warn("Failed to load starlight data for chunk, light will be recalculated", ex);
-        }
-    }
-
     @Unique
     private static void starlight$saveLightData(final Chunk chunk, final World world, final NBTTagCompound compound) {
         final int minSection = WorldUtil.getMinLightSection(world);
         final int maxSection = WorldUtil.getMaxLightSection(world);
 
-        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk)chunk).getBlockNibbles();
-        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk)chunk).getSkyNibbles();
+        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk) chunk).getBlockNibbles();
+        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk) chunk).getSkyNibbles();
 
         if (blockNibbles == null || skyNibbles == null) {
             return;
         }
 
-        final boolean lit = ((ExtendedChunk)chunk).isStarlightLit();
+        final boolean lit = ((ExtendedChunk) chunk).isStarlightLit();
 
         // Read existing "Level" tag from compound
         final NBTTagCompound level = compound.getCompoundTag("Level");
@@ -124,7 +86,7 @@ public abstract class AnvilChunkLoaderMixin {
                     NBTTagCompound section = sections[i - minSection];
                     if (section == null) {
                         section = new NBTTagCompound();
-                        section.setByte("Y", (byte)i);
+                        section.setByte("Y", (byte) i);
                         sections[i - minSection] = section;
                     }
 
@@ -199,8 +161,46 @@ public abstract class AnvilChunkLoaderMixin {
             }
         }
 
-        ((ExtendedChunk)chunk).setBlockNibbles(blockNibbles);
-        ((ExtendedChunk)chunk).setSkyNibbles(skyNibbles);
-        ((ExtendedChunk)chunk).setStarlightLit(lit);
+        ((ExtendedChunk) chunk).setBlockNibbles(blockNibbles);
+        ((ExtendedChunk) chunk).setSkyNibbles(skyNibbles);
+        ((ExtendedChunk) chunk).setStarlightLit(lit);
+    }
+
+    /**
+     * Force-process all pending light updates before saving.
+     */
+    @Inject(method = "saveChunk", at = @At("HEAD"))
+    private void onSaveChunk(final World world, final Chunk chunk, final CallbackInfo ci) {
+        final StarLightInterface lightEngine = ((ExtendedWorld) world).getLightEngine();
+        if (lightEngine != null) {
+            lightEngine.propagateChanges();
+        }
+    }
+
+    /**
+     * Inject starlight data on save.
+     */
+    @Inject(method = "writeChunkToNBT", at = @At("RETURN"))
+    private void onWriteChunkToNBT(final Chunk chunk, final World world, final NBTTagCompound compound, final CallbackInfo ci) {
+        try {
+            starlight$saveLightData(chunk, world, compound);
+        } catch (final Exception ex) {
+            STARLIGHT_LOGGER.warn("Failed to inject starlight data into save for chunk (" + chunk.x + ", " + chunk.z + "), light will be recalculated on next load", ex);
+        }
+    }
+
+    /**
+     * Load starlight data on chunk read.
+     */
+    @Inject(method = "readChunkFromNBT", at = @At("RETURN"))
+    private void onReadChunkFromNBT(final World world, final NBTTagCompound compound, final CallbackInfoReturnable<Chunk> cir) {
+        try {
+            final Chunk chunk = cir.getReturnValue();
+            if (chunk != null) {
+                starlight$loadLightData(chunk, world, compound);
+            }
+        } catch (final Exception ex) {
+            STARLIGHT_LOGGER.warn("Failed to load starlight data for chunk, light will be recalculated", ex);
+        }
     }
 }

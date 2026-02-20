@@ -26,12 +26,10 @@ public abstract class MinecraftMixin {
 
     @Shadow
     public RenderGlobal renderGlobal;
-
-    @Shadow
-    private boolean isGamePaused;
-
     @Shadow
     public WorldClient world;
+    @Shadow
+    private boolean isGamePaused;
 
     /**
      * Process client-side light propagation and render global light updates during runTick.
@@ -42,13 +40,13 @@ public abstract class MinecraftMixin {
 
         if (!this.isGamePaused && this.world != null) {
             // Process client-side light changes
-            final StarLightInterface lightEngine = ((ExtendedWorld)this.world).getLightEngine();
+            final StarLightInterface lightEngine = ((ExtendedWorld) this.world).getLightEngine();
             if (lightEngine != null && lightEngine.hasUpdates()) {
                 lightEngine.propagateChanges();
             }
 
             // Process render global light updates (batched notifyLightSet calls)
-            ((ExtendedRenderGlobal)this.renderGlobal).starlight$processLightUpdates();
+            ((ExtendedRenderGlobal) this.renderGlobal).starlight$processLightUpdates();
         }
     }
 }

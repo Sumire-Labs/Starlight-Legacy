@@ -1,6 +1,7 @@
 package jp.s12kuma01.starlightlegacy.common.light;
 
 import net.minecraft.util.math.BlockPos;
+
 import java.util.Collection;
 
 public interface VariableBlockLightHandler {

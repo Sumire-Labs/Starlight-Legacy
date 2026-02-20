@@ -16,6 +16,7 @@ import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.NibbleArray;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -58,6 +59,76 @@ public final class StarLightInterface {
         }
     }
 
+    /**
+     * Ensures a chunk has been lit by Starlight. Initializes section transparency data,
+     * runs the light engine, and syncs to vanilla nibbles.
+     */
+    public static void ensureChunkLit(final World world, final Chunk chunk) {
+        if (chunk == null) {
+            return;
+        }
+        final ExtendedChunk exChunk = (ExtendedChunk) chunk;
+        if (exChunk.isStarlightLit()) {
+            return;
+        }
+        // Initialize section transparency data
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        for (final ExtendedBlockStorage section : sections) {
+            if (section != null && section != Chunk.NULL_BLOCK_STORAGE) {
+                ((ExtendedChunkSection) section).starlight$initKnownTransparenciesData();
+            }
+        }
+
+        // Light the chunk using Starlight engine
+        final StarLightInterface lightEngine = ((ExtendedWorld) world).getLightEngine();
+        if (lightEngine != null) {
+            // lightChunk() computes correct lighting from the final block state via full BFS.
+            // Any blockChange() calls queued during world generation are redundant — discard them.
+            lightEngine.lightChunk(chunk, StarLightEngine.getEmptySectionsForChunk(chunk));
+            lightEngine.removeChunkTasks(new ChunkPos(chunk.x, chunk.z));
+            syncNibbleToVanilla(chunk);
+        }
+        exChunk.setStarlightLit(true);
+    }
+
+    /**
+     * Syncs SWMR nibble data to vanilla NibbleArrays in ExtendedBlockStorage.
+     * Must be called after propagateChanges() and before rendering/packet sending.
+     */
+    public static void syncNibbleToVanilla(final Chunk chunk) {
+        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk) chunk).getBlockNibbles();
+        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk) chunk).getSkyNibbles();
+
+        if (blockNibbles == null || skyNibbles == null) {
+            return;
+        }
+
+        for (int i = 0; i < sections.length; ++i) {
+            final ExtendedBlockStorage section = sections[i];
+            if (section == null || section == Chunk.NULL_BLOCK_STORAGE) {
+                continue;
+            }
+
+            // nibble index offset: minLightSection = -1, so section index 0 maps to nibble index 1
+            final int nibbleIndex = i + 1; // +1 because minLightSection = -1
+
+            if (nibbleIndex >= 0 && nibbleIndex < blockNibbles.length) {
+                final SWMRNibbleArray blockNibble = blockNibbles[nibbleIndex];
+                if (blockNibble != null) {
+                    blockNibble.syncToVanillaNibble(section.getBlockLight());
+                }
+            }
+
+            if (nibbleIndex >= 0 && nibbleIndex < skyNibbles.length) {
+                final SWMRNibbleArray skyNibble = skyNibbles[nibbleIndex];
+                if (skyNibble != null && section.getSkyLight() != null) {
+                    skyNibble.syncToVanillaNibble(section.getSkyLight());
+                }
+            }
+        }
+    }
+
     public boolean isClientSide() {
         return this.isClientSide;
     }
@@ -66,7 +137,7 @@ public final class StarLightInterface {
         if (this.world == null) {
             return null;
         }
-        return ((ExtendedWorld)this.world).getChunkAtImmediately(chunkX, chunkZ);
+        return ((ExtendedWorld) this.world).getChunkAtImmediately(chunkX, chunkZ);
     }
 
     public boolean hasUpdates() {
@@ -313,76 +384,6 @@ public final class StarLightInterface {
     }
 
     /**
-     * Ensures a chunk has been lit by Starlight. Initializes section transparency data,
-     * runs the light engine, and syncs to vanilla nibbles.
-     */
-    public static void ensureChunkLit(final World world, final Chunk chunk) {
-        if (chunk == null) {
-            return;
-        }
-        final ExtendedChunk exChunk = (ExtendedChunk)chunk;
-        if (exChunk.isStarlightLit()) {
-            return;
-        }
-        // Initialize section transparency data
-        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
-        for (final ExtendedBlockStorage section : sections) {
-            if (section != null && section != Chunk.NULL_BLOCK_STORAGE) {
-                ((ExtendedChunkSection)section).starlight$initKnownTransparenciesData();
-            }
-        }
-
-        // Light the chunk using Starlight engine
-        final StarLightInterface lightEngine = ((ExtendedWorld)world).getLightEngine();
-        if (lightEngine != null) {
-            // lightChunk() computes correct lighting from the final block state via full BFS.
-            // Any blockChange() calls queued during world generation are redundant — discard them.
-            lightEngine.lightChunk(chunk, StarLightEngine.getEmptySectionsForChunk(chunk));
-            lightEngine.removeChunkTasks(new ChunkPos(chunk.x, chunk.z));
-            syncNibbleToVanilla(chunk);
-        }
-        exChunk.setStarlightLit(true);
-    }
-
-    /**
-     * Syncs SWMR nibble data to vanilla NibbleArrays in ExtendedBlockStorage.
-     * Must be called after propagateChanges() and before rendering/packet sending.
-     */
-    public static void syncNibbleToVanilla(final Chunk chunk) {
-        final ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
-        final SWMRNibbleArray[] blockNibbles = ((ExtendedChunk)chunk).getBlockNibbles();
-        final SWMRNibbleArray[] skyNibbles = ((ExtendedChunk)chunk).getSkyNibbles();
-
-        if (blockNibbles == null || skyNibbles == null) {
-            return;
-        }
-
-        for (int i = 0; i < sections.length; ++i) {
-            final ExtendedBlockStorage section = sections[i];
-            if (section == null || section == Chunk.NULL_BLOCK_STORAGE) {
-                continue;
-            }
-
-            // nibble index offset: minLightSection = -1, so section index 0 maps to nibble index 1
-            final int nibbleIndex = i + 1; // +1 because minLightSection = -1
-
-            if (nibbleIndex >= 0 && nibbleIndex < blockNibbles.length) {
-                final SWMRNibbleArray blockNibble = blockNibbles[nibbleIndex];
-                if (blockNibble != null) {
-                    blockNibble.syncToVanillaNibble(section.getBlockLight());
-                }
-            }
-
-            if (nibbleIndex >= 0 && nibbleIndex < skyNibbles.length) {
-                final SWMRNibbleArray skyNibble = skyNibbles[nibbleIndex];
-                if (skyNibble != null && section.getSkyLight() != null) {
-                    skyNibble.syncToVanillaNibble(section.getSkyLight());
-                }
-            }
-        }
-    }
-
-    /**
      * Gets the sky light level from SWMR data for a given position.
      */
     public int getSkyLightLevel(final BlockPos pos) {
@@ -400,7 +401,7 @@ public final class StarLightInterface {
             return 15;
         }
 
-        final SWMRNibbleArray[] nibbles = ((ExtendedChunk)chunk).getSkyNibbles();
+        final SWMRNibbleArray[] nibbles = ((ExtendedChunk) chunk).getSkyNibbles();
         if (nibbles == null) {
             return 15;
         }
@@ -408,7 +409,7 @@ public final class StarLightInterface {
         final SWMRNibbleArray nibble = nibbles[cy - this.minLightSection];
         if (nibble == null || nibble.isNullNibbleVisible()) {
             // check emptiness map for above
-            final boolean[] emptinessMap = ((ExtendedChunk)chunk).getSkyEmptinessMap();
+            final boolean[] emptinessMap = ((ExtendedChunk) chunk).getSkyEmptinessMap();
             if (emptinessMap == null) {
                 return 15;
             }
@@ -458,7 +459,7 @@ public final class StarLightInterface {
             return 0;
         }
 
-        final SWMRNibbleArray[] nibbles = ((ExtendedChunk)chunk).getBlockNibbles();
+        final SWMRNibbleArray[] nibbles = ((ExtendedChunk) chunk).getBlockNibbles();
         if (nibbles == null) {
             return 0;
         }
@@ -526,14 +527,12 @@ public final class StarLightInterface {
         protected static final class ChunkTasks {
 
             public final Set<BlockPos> changedPositions = new HashSet<>();
+            public final long chunkCoordinate;
             public Boolean[] changedSectionSet;
             public ShortOpenHashSet queuedEdgeChecksSky;
             public ShortOpenHashSet queuedEdgeChecksBlock;
             public List<Runnable> lightTasks;
-
             public volatile boolean completed;
-
-            public final long chunkCoordinate;
 
             public ChunkTasks(final long chunkCoordinate) {
                 this.chunkCoordinate = chunkCoordinate;

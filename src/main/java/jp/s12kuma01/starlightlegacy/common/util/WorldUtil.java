@@ -6,6 +6,10 @@ public final class WorldUtil {
 
     // 1.12.2 has fixed world height: 0-255 (16 sections, indices 0-15)
 
+    private WorldUtil() {
+        throw new RuntimeException();
+    }
+
     public static int getMaxSection(final World world) {
         return 15;
     }
@@ -36,9 +40,5 @@ public final class WorldUtil {
 
     public static int getMaxBlockY(final World world) {
         return (getMaxSection(world) << 4) | 15;
-    }
-
-    private WorldUtil() {
-        throw new RuntimeException();
     }
 }

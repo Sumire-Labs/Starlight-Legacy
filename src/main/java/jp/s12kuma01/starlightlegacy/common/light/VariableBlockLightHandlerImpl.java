@@ -4,6 +4,7 @@ import jp.s12kuma01.starlightlegacy.common.util.CoordinateUtils;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.util.math.BlockPos;
+
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -13,6 +14,7 @@ public class VariableBlockLightHandlerImpl implements VariableBlockLightHandler 
 
     protected final Long2ObjectOpenHashMap<Set<BlockPos>> positionsByChunk = new Long2ObjectOpenHashMap<>();
     protected final Long2IntOpenHashMap lightValuesByPosition = new Long2IntOpenHashMap();
+
     {
         this.lightValuesByPosition.defaultReturnValue(-1);
         this.positionsByChunk.defaultReturnValue(Collections.emptySet());

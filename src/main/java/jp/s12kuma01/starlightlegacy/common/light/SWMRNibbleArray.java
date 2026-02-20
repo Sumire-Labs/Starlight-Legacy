@@ -1,20 +1,50 @@
 package jp.s12kuma01.starlightlegacy.common.light;
 
 import net.minecraft.world.chunk.NibbleArray;
+
 import java.util.ArrayDeque;
 import java.util.Arrays;
 
 // SWMR -> Single Writer Multi Reader Nibble Array
 public final class SWMRNibbleArray {
 
-    protected static final int INIT_STATE_NULL   = 0; // null
+    public static final int ARRAY_SIZE = 16 * 16 * 16 / (8 / 4); // blocks / bytes per block = 2048
+    protected static final int INIT_STATE_NULL = 0; // null
     protected static final int INIT_STATE_UNINIT = 1; // uninitialised
-    protected static final int INIT_STATE_INIT   = 2; // initialised
+    protected static final int INIT_STATE_INIT = 2; // initialised
     protected static final int INIT_STATE_HIDDEN = 3; // initialised, but conversion to Vanilla data should be treated as if NULL
-
-    public static final int ARRAY_SIZE = 16 * 16 * 16 / (8/4); // blocks / bytes per block = 2048
-    private static final int POOL_MAX_SIZE = 128;
     static final ThreadLocal<ArrayDeque<byte[]>> WORKING_BYTES_POOL = ThreadLocal.withInitial(ArrayDeque::new);
+    private static final int POOL_MAX_SIZE = 128;
+    protected int stateUpdating;
+    protected volatile int stateVisible;
+    protected byte[] storageUpdating;
+    protected boolean updatingDirty;
+    protected volatile byte[] storageVisible;
+
+    public SWMRNibbleArray() {
+        this(null, false); // lazy init
+    }
+    public SWMRNibbleArray(final byte[] bytes) {
+        this(bytes, false);
+    }
+
+    public SWMRNibbleArray(final byte[] bytes, final boolean isNullNibble) {
+        if (bytes != null && bytes.length != ARRAY_SIZE) {
+            throw new IllegalArgumentException("Data of wrong length: " + bytes.length);
+        }
+        this.stateVisible = this.stateUpdating = bytes == null ? (isNullNibble ? INIT_STATE_NULL : INIT_STATE_UNINIT) : INIT_STATE_INIT;
+        this.storageUpdating = this.storageVisible = bytes;
+    }
+    public SWMRNibbleArray(final byte[] bytes, final int state) {
+        if (bytes != null && bytes.length != ARRAY_SIZE) {
+            throw new IllegalArgumentException("Data of wrong length: " + bytes.length);
+        }
+        if (bytes == null && (state == INIT_STATE_INIT || state == INIT_STATE_HIDDEN)) {
+            throw new IllegalArgumentException("Data cannot be null and have state be initialised");
+        }
+        this.stateUpdating = this.stateVisible = state;
+        this.storageUpdating = this.storageVisible = bytes;
+    }
 
     private static byte[] allocateBytes() {
         final byte[] inPool = WORKING_BYTES_POOL.get().pollFirst();
@@ -49,6 +79,19 @@ public final class SWMRNibbleArray {
         return new SWMRNibbleArray(data.clone());
     }
 
+    protected static boolean isAllZero(final byte[] data) {
+        for (int i = 0; i < (ARRAY_SIZE >>> 4); ++i) {
+            byte whole = data[i << 4];
+            for (int k = 1; k < (1 << 4); ++k) {
+                whole |= data[(i << 4) | k];
+            }
+            if (whole != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Copies SWMR data into a vanilla NibbleArray for rendering/mod compat.
      */
@@ -78,45 +121,11 @@ public final class SWMRNibbleArray {
                 System.arraycopy(this.storageVisible, 0, target.getData(), 0, ARRAY_SIZE);
                 return true;
             } else if (this.stateVisible == INIT_STATE_UNINIT) {
-                Arrays.fill(target.getData(), (byte)0);
+                Arrays.fill(target.getData(), (byte) 0);
                 return true;
             }
             return false;
         }
-    }
-
-    protected int stateUpdating;
-    protected volatile int stateVisible;
-
-    protected byte[] storageUpdating;
-    protected boolean updatingDirty;
-    protected volatile byte[] storageVisible;
-
-    public SWMRNibbleArray() {
-        this(null, false); // lazy init
-    }
-
-    public SWMRNibbleArray(final byte[] bytes) {
-        this(bytes, false);
-    }
-
-    public SWMRNibbleArray(final byte[] bytes, final boolean isNullNibble) {
-        if (bytes != null && bytes.length != ARRAY_SIZE) {
-            throw new IllegalArgumentException("Data of wrong length: " + bytes.length);
-        }
-        this.stateVisible = this.stateUpdating = bytes == null ? (isNullNibble ? INIT_STATE_NULL : INIT_STATE_UNINIT) : INIT_STATE_INIT;
-        this.storageUpdating = this.storageVisible = bytes;
-    }
-
-    public SWMRNibbleArray(final byte[] bytes, final int state) {
-        if (bytes != null && bytes.length != ARRAY_SIZE) {
-            throw new IllegalArgumentException("Data of wrong length: " + bytes.length);
-        }
-        if (bytes == null && (state == INIT_STATE_INIT || state == INIT_STATE_HIDDEN)) {
-            throw new IllegalArgumentException("Data cannot be null and have state be initialised");
-        }
-        this.stateUpdating = this.stateVisible = state;
-        this.storageUpdating = this.storageVisible = bytes;
     }
 
     public SaveState getSaveState() {
@@ -136,19 +145,6 @@ public final class SWMRNibbleArray {
                 return new SaveState(data.clone(), state);
             }
         }
-    }
-
-    protected static boolean isAllZero(final byte[] data) {
-        for (int i = 0; i < (ARRAY_SIZE >>> 4); ++i) {
-            byte whole = data[i << 4];
-            for (int k = 1; k < (1 << 4); ++k) {
-                whole |= data[(i << 4) | k];
-            }
-            if (whole != 0) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public void extrudeLower(final SWMRNibbleArray other) {
@@ -183,7 +179,7 @@ public final class SWMRNibbleArray {
         if (this.stateUpdating != INIT_STATE_HIDDEN) {
             this.stateUpdating = INIT_STATE_INIT;
         }
-        Arrays.fill(this.storageUpdating == null || !this.updatingDirty ? this.storageUpdating = allocateBytes() : this.storageUpdating, (byte)-1);
+        Arrays.fill(this.storageUpdating == null || !this.updatingDirty ? this.storageUpdating = allocateBytes() : this.storageUpdating, (byte) -1);
         this.updatingDirty = true;
     }
 
@@ -191,7 +187,7 @@ public final class SWMRNibbleArray {
         if (this.stateUpdating != INIT_STATE_HIDDEN) {
             this.stateUpdating = INIT_STATE_INIT;
         }
-        Arrays.fill(this.storageUpdating == null || !this.updatingDirty ? this.storageUpdating = allocateBytes() : this.storageUpdating, (byte)0);
+        Arrays.fill(this.storageUpdating == null || !this.updatingDirty ? this.storageUpdating = allocateBytes() : this.storageUpdating, (byte) 0);
         this.updatingDirty = true;
     }
 
@@ -273,7 +269,7 @@ public final class SWMRNibbleArray {
         }
         if (this.storageUpdating == null) {
             this.storageUpdating = allocateBytes();
-            Arrays.fill(this.storageUpdating, (byte)0);
+            Arrays.fill(this.storageUpdating, (byte) 0);
         } else {
             System.arraycopy(this.storageUpdating, 0, this.storageUpdating = allocateBytes(), 0, ARRAY_SIZE);
         }
@@ -349,7 +345,7 @@ public final class SWMRNibbleArray {
         }
         final int shift = (index & 1) << 2;
         final int i = index >>> 1;
-        this.storageUpdating[i] = (byte)((this.storageUpdating[i] & (0xF0 >>> shift)) | (value << shift));
+        this.storageUpdating[i] = (byte) ((this.storageUpdating[i] & (0xF0 >>> shift)) | (value << shift));
     }
 
     public static final class SaveState {

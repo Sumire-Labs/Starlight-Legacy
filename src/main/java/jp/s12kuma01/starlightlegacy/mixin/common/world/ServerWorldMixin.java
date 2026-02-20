@@ -18,23 +18,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(WorldServer.class)
 public abstract class ServerWorldMixin implements ExtendedWorld {
 
-    @Shadow
-    public abstract ChunkProviderServer getChunkProvider();
-
     @Unique
     private StarLightInterface starlight$lightEngine;
-
     @Unique
     private VariableBlockLightHandler starlight$customLightHandler;
 
+    @Shadow
+    public abstract ChunkProviderServer getChunkProvider();
+
     @Inject(method = "<init>*", at = @At("RETURN"))
     private void onInit(final CallbackInfo ci) {
-        final World self = (World)(Object)this;
+        final World self = (World) (Object) this;
         final LightChunkGetter getter = new LightChunkGetter() {
             @Override
             public Chunk getChunkForLighting(final int chunkX, final int chunkZ) {
                 return ServerWorldMixin.this.getChunkAtImmediately(chunkX, chunkZ);
             }
+
             @Override
             public World getWorld() {
                 return self;

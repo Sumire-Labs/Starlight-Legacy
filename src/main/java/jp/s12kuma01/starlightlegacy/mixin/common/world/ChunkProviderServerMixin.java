@@ -24,7 +24,7 @@ public abstract class ChunkProviderServerMixin {
      */
     @Inject(method = "saveChunks", at = @At("HEAD"))
     private void onSaveChunks(final boolean all, final CallbackInfoReturnable<Boolean> cir) {
-        final StarLightInterface lightEngine = ((ExtendedWorld)this.world).getLightEngine();
+        final StarLightInterface lightEngine = ((ExtendedWorld) this.world).getLightEngine();
         if (lightEngine != null) {
             lightEngine.propagateChanges();
         }
@@ -35,7 +35,7 @@ public abstract class ChunkProviderServerMixin {
      */
     @Inject(method = "tick", at = @At("HEAD"))
     private void onTick(final CallbackInfoReturnable<Boolean> cir) {
-        final StarLightInterface lightEngine = ((ExtendedWorld)this.world).getLightEngine();
+        final StarLightInterface lightEngine = ((ExtendedWorld) this.world).getLightEngine();
         if (lightEngine != null && lightEngine.hasUpdates()) {
             lightEngine.propagateChanges();
             // Sync nibbles to vanilla for all loaded chunks that have pending updates

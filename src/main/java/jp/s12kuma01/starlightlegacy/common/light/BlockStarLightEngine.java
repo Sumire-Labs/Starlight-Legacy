@@ -9,9 +9,13 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
+
 import java.util.Set;
 
 public final class BlockStarLightEngine extends StarLightEngine {
+
+    protected final BlockPos.MutableBlockPos recalcCenterPos = new BlockPos.MutableBlockPos();
+    protected final BlockPos.MutableBlockPos recalcNeighbourPos = new BlockPos.MutableBlockPos();
 
     public BlockStarLightEngine(final World world) {
         super(false, world);
@@ -19,28 +23,28 @@ public final class BlockStarLightEngine extends StarLightEngine {
 
     @Override
     protected boolean[] getEmptinessMap(final Chunk chunk) {
-        return ((ExtendedChunk)chunk).getBlockEmptinessMap();
+        return ((ExtendedChunk) chunk).getBlockEmptinessMap();
     }
 
     @Override
     protected void setEmptinessMap(final Chunk chunk, final boolean[] to) {
-        ((ExtendedChunk)chunk).setBlockEmptinessMap(to);
+        ((ExtendedChunk) chunk).setBlockEmptinessMap(to);
     }
 
     @Override
     protected SWMRNibbleArray[] getNibblesOnChunk(final Chunk chunk) {
-        return ((ExtendedChunk)chunk).getBlockNibbles();
+        return ((ExtendedChunk) chunk).getBlockNibbles();
     }
 
     @Override
     protected void setNibbles(final Chunk chunk, final SWMRNibbleArray[] to) {
-        ((ExtendedChunk)chunk).setBlockNibbles(to);
+        ((ExtendedChunk) chunk).setBlockNibbles(to);
     }
 
     @Override
     protected boolean canUseChunk(final Chunk chunk) {
         // In 1.12.2 there is no ChunkStatus; use our own lit flag
-        return ((ExtendedChunk)chunk).isStarlightLit();
+        return ((ExtendedChunk) chunk).isStarlightLit();
     }
 
     @Override
@@ -85,7 +89,7 @@ public final class BlockStarLightEngine extends StarLightEngine {
         final int encodeOffset = this.coordinateOffset;
         final int emittedMask = this.emittedLightMask;
 
-        final VariableBlockLightHandler customBlockHandler = ((ExtendedWorld)lightAccess.getWorld()).getCustomLightHandler();
+        final VariableBlockLightHandler customBlockHandler = ((ExtendedWorld) lightAccess.getWorld()).getCustomLightHandler();
         final int currentLevel = this.getLightLevel(worldX, worldY, worldZ);
         final IBlockState blockState = this.getBlockState(worldX, worldY, worldZ);
         final int emittedLevel = (customBlockHandler != null ? this.getCustomLightLevel(customBlockHandler, worldX, worldY, worldZ, blockState.getLightValue()) : blockState.getLightValue()) & emittedMask;
@@ -96,8 +100,8 @@ public final class BlockStarLightEngine extends StarLightEngine {
             this.appendToIncreaseQueue(
                     ((worldX + (worldZ << 6) + (worldY << (6 + 6)) + encodeOffset) & ((1L << (6 + 6 + 16)) - 1))
                             | (emittedLevel & 0xFL) << (6 + 6 + 16)
-                            | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
-                            | (((ExtendedAbstractBlockState)blockState).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
+                            | (((long) ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
+                            | (((ExtendedAbstractBlockState) blockState).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
             );
         }
         // this also accounts for a change in emitted light that would cause a decrease
@@ -106,17 +110,14 @@ public final class BlockStarLightEngine extends StarLightEngine {
         this.appendToDecreaseQueue(
                 ((worldX + (worldZ << 6) + (worldY << (6 + 6)) + encodeOffset) & ((1L << (6 + 6 + 16)) - 1))
                         | (currentLevel & 0xFL) << (6 + 6 + 16)
-                        | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
-                        // always keep sided transparent false here, new block might be conditionally transparent which would
-                        // prevent us from decreasing sources in the directions where the new block is opaque
-                        // if it turns out we were wrong to de-propagate the source, the re-propagate logic WILL always
-                        // catch that and fix it.
+                        | (((long) ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
+                // always keep sided transparent false here, new block might be conditionally transparent which would
+                // prevent us from decreasing sources in the directions where the new block is opaque
+                // if it turns out we were wrong to de-propagate the source, the re-propagate logic WILL always
+                // catch that and fix it.
         );
         // re-propagating neighbours (done by the decrease queue) will also account for opacity changes in this block
     }
-
-    protected final BlockPos.MutableBlockPos recalcCenterPos = new BlockPos.MutableBlockPos();
-    protected final BlockPos.MutableBlockPos recalcNeighbourPos = new BlockPos.MutableBlockPos();
 
     @Override
     protected int calculateLightValue(final LightChunkGetter lightAccess, final int worldX, final int worldY, final int worldZ,
@@ -133,12 +134,12 @@ public final class BlockStarLightEngine extends StarLightEngine {
 
         final int sectionOffset = this.chunkSectionIndexOffset;
         final IBlockState conditionallyOpaqueState;
-        int opacity = ((ExtendedAbstractBlockState)centerState).getOpacityIfCached();
+        int opacity = ((ExtendedAbstractBlockState) centerState).getOpacityIfCached();
 
         if (opacity == -1) {
             this.recalcCenterPos.setPos(worldX, worldY, worldZ);
             opacity = centerState.getBlock().getLightOpacity(centerState, lightAccess.getWorld(), this.recalcCenterPos);
-            if (((ExtendedAbstractBlockState)centerState).isConditionallyFullOpaque()) {
+            if (((ExtendedAbstractBlockState) centerState).isConditionallyFullOpaque()) {
                 conditionallyOpaqueState = centerState;
             } else {
                 conditionallyOpaqueState = null;
@@ -207,7 +208,7 @@ public final class BlockStarLightEngine extends StarLightEngine {
     public void lightChunk(final LightChunkGetter lightAccess, final Chunk chunk, final boolean needsEdgeChecks) {
         // setup sources - inlined from getSources to avoid ArrayList/BlockPos allocation
         final int emittedMask = this.emittedLightMask;
-        final VariableBlockLightHandler customBlockHandler = ((ExtendedWorld)lightAccess.getWorld()).getCustomLightHandler();
+        final VariableBlockLightHandler customBlockHandler = ((ExtendedWorld) lightAccess.getWorld()).getCustomLightHandler();
 
         final int offX = chunk.x << 4;
         final int offZ = chunk.z << 4;
@@ -246,8 +247,8 @@ public final class BlockStarLightEngine extends StarLightEngine {
                 this.appendToIncreaseQueue(
                         ((worldX + (worldZ << 6) + (worldY << (6 + 6)) + this.coordinateOffset) & ((1L << (6 + 6 + 16)) - 1))
                                 | (emittedLight & 0xFL) << (6 + 6 + 16)
-                                | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
-                                | (((ExtendedAbstractBlockState)state).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
+                                | (((long) ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
+                                | (((ExtendedAbstractBlockState) state).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
                 );
 
                 // propagation wont set this for us
@@ -271,8 +272,8 @@ public final class BlockStarLightEngine extends StarLightEngine {
                 this.appendToIncreaseQueue(
                         ((pos.getX() + (pos.getZ() << 6) + (pos.getY() << (6 + 6)) + this.coordinateOffset) & ((1L << (6 + 6 + 16)) - 1))
                                 | (emittedLight & 0xFL) << (6 + 6 + 16)
-                                | (((long)ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
-                                | (((ExtendedAbstractBlockState)blockState).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
+                                | (((long) ALL_DIRECTIONS_BITSET) << (6 + 6 + 16 + 4))
+                                | (((ExtendedAbstractBlockState) blockState).isConditionallyFullOpaque() ? FLAG_HAS_SIDED_TRANSPARENT_BLOCKS : 0)
                 );
 
                 this.setLightLevel(pos.getX(), pos.getY(), pos.getZ(), emittedLight);

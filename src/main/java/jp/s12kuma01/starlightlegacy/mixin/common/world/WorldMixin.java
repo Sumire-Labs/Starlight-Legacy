@@ -17,12 +17,19 @@ import org.spongepowered.asm.mixin.Shadow;
 @Mixin(World.class)
 public abstract class WorldMixin implements ExtendedWorld {
 
-    @Shadow public int skylightSubtracted;
-    @Shadow public WorldProvider provider;
+    @Shadow
+    public int skylightSubtracted;
+    @Shadow
+    public WorldProvider provider;
 
-    @Shadow public abstract IBlockState getBlockState(BlockPos pos);
-    @Shadow public abstract boolean isValid(BlockPos pos);
-    @Shadow public abstract boolean isBlockLoaded(BlockPos pos);
+    @Shadow
+    public abstract IBlockState getBlockState(BlockPos pos);
+
+    @Shadow
+    public abstract boolean isValid(BlockPos pos);
+
+    @Shadow
+    public abstract boolean isBlockLoaded(BlockPos pos);
 
     /**
      * @author Spottedleaf (Starlight)

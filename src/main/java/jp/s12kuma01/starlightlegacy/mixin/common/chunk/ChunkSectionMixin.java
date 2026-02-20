@@ -15,18 +15,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ExtendedBlockStorage.class)
 public abstract class ChunkSectionMixin implements ExtendedChunkSection {
 
-    @Shadow
-    public abstract BlockStateContainer getData();
-
+    @Unique
+    private final long[] starlight$knownBlockTransparencies = new long[16 * 16 * 16 * 2 / Long.SIZE];
     @Unique
     protected int starlight$transparentBlockCount;
 
     @Unique
-    private final long[] starlight$knownBlockTransparencies = new long[16 * 16 * 16 * 2 / Long.SIZE];
-
-    @Unique
     private static long starlight$getKnownTransparency(final IBlockState state) {
-        final int opacityIfCached = ((ExtendedAbstractBlockState)state).getOpacityIfCached();
+        final int opacityIfCached = ((ExtendedAbstractBlockState) state).getOpacityIfCached();
         if (opacityIfCached == 0) {
             return ExtendedChunkSection.BLOCK_IS_TRANSPARENT;
         }
@@ -35,6 +31,9 @@ public abstract class ChunkSectionMixin implements ExtendedChunkSection {
         }
         return opacityIfCached == -1 ? ExtendedChunkSection.BLOCK_SPECIAL_TRANSPARENCY : ExtendedChunkSection.BLOCK_UNKNOWN_TRANSPARENCY;
     }
+
+    @Shadow
+    public abstract BlockStateContainer getData();
 
     @Unique
     private void starlight$updateTransparencyInfo(final int blockIndex, final long transparency) {
