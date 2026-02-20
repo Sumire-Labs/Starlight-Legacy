@@ -5,7 +5,7 @@ import net.minecraftforge.fml.common.event.FMLPreInitializationEvent;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-@Mod(modid = "starlightlegacy", name = "Starlight-Legacy", version = "1.0.0")
+@Mod(modid = Reference.MOD_ID, name = Reference.MOD_NAME, version = Reference.VERSION)
 public class StarlightMod {
 
     public static final Logger LOGGER = LogManager.getLogger("StarlightLegacy");
