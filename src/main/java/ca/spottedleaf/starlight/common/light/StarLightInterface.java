@@ -359,7 +359,7 @@ public final class StarLightInterface {
 
         for (int i = 0; i < sections.length; ++i) {
             final ExtendedBlockStorage section = sections[i];
-            if (section == Chunk.NULL_BLOCK_STORAGE) {
+            if (section == null || section == Chunk.NULL_BLOCK_STORAGE) {
                 continue;
             }
 

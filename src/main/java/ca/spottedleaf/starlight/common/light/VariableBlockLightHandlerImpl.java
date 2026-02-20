@@ -25,7 +25,7 @@ public class VariableBlockLightHandlerImpl implements VariableBlockLightHandler 
 
     @Override
     public Collection<BlockPos> getCustomLightPositions(final int chunkX, final int chunkZ) {
-        return new HashSet<>(this.positionsByChunk.get(CoordinateUtils.getChunkKey(chunkX, chunkZ)));
+        return this.positionsByChunk.getOrDefault(CoordinateUtils.getChunkKey(chunkX, chunkZ), Collections.emptySet());
     }
 
     public void setSource(final int x, final int y, final int z, final int to) {
