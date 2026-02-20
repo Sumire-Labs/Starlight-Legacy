@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "package": "jp.s12kuma01.starlightlegacy.mixin",
+  "compatibilityLevel": "JAVA_8",
+  "target": "@env(DEFAULT)",
+  "client": [
+    "client.world.ClientWorldMixin",
+    "client.renderer.RenderGlobalMixin",
+    "client.MinecraftMixin",
+    "client.network.NetHandlerPlayClientMixin"
+  ],
+  "mixins": [
+    "common.blockstate.BlockStateBaseMixin",
+    "common.chunk.ChunkMixin",
+    "common.chunk.ChunkSectionMixin",
+    "common.world.WorldMixin",
+    "common.world.ServerWorldMixin",
+    "common.world.AnvilChunkLoaderMixin",
+    "common.world.ChunkProviderServerMixin",
+    "common.network.SPacketChunkDataMixin"
+  ],
+  "server": [],
+  "setSourceFile": true,
+  "minVersion": "0.8.7"
+}
