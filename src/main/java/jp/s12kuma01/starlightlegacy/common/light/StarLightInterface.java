@@ -7,20 +7,15 @@ import jp.s12kuma01.starlightlegacy.common.util.WorldUtil;
 import jp.s12kuma01.starlightlegacy.common.world.ExtendedWorld;
 import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import it.unimi.dsi.fastutil.shorts.ShortCollection;
-import it.unimi.dsi.fastutil.shorts.ShortOpenHashSet;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.ChunkPos;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
-import net.minecraft.world.chunk.NibbleArray;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 
 import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Set;
 
 public final class StarLightInterface {
@@ -129,10 +124,6 @@ public final class StarLightInterface {
         }
     }
 
-    public boolean isClientSide() {
-        return this.isClientSide;
-    }
-
     public Chunk getAnyChunkNow(final int chunkX, final int chunkZ) {
         if (this.world == null) {
             return null;
@@ -142,14 +133,6 @@ public final class StarLightInterface {
 
     public boolean hasUpdates() {
         return !this.lightQueue.isEmpty();
-    }
-
-    public World getWorld() {
-        return this.world;
-    }
-
-    public LightChunkGetter getLightAccess() {
-        return this.lightAccess;
     }
 
     protected final SkyStarLightEngine getSkyLightEngine() {
@@ -195,47 +178,6 @@ public final class StarLightInterface {
         this.lightQueue.queueBlockChange(pos);
     }
 
-    public void sectionChange(final int sectionX, final int sectionY, final int sectionZ, final boolean newEmptyValue) {
-        if (this.world == null) {
-            return;
-        }
-        this.lightQueue.queueSectionChange(sectionX, sectionY, sectionZ, newEmptyValue);
-    }
-
-    public void forceLoadInChunk(final Chunk chunk, final Boolean[] emptySections) {
-        final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
-        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
-
-        try {
-            if (skyEngine != null) {
-                skyEngine.forceHandleEmptySectionChanges(this.lightAccess, chunk, emptySections);
-            }
-            if (blockEngine != null) {
-                blockEngine.forceHandleEmptySectionChanges(this.lightAccess, chunk, emptySections);
-            }
-        } finally {
-            this.releaseSkyLightEngine(skyEngine);
-            this.releaseBlockLightEngine(blockEngine);
-        }
-    }
-
-    public void loadInChunk(final int chunkX, final int chunkZ, final Boolean[] emptySections) {
-        final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
-        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
-
-        try {
-            if (skyEngine != null) {
-                skyEngine.handleEmptySectionChanges(this.lightAccess, chunkX, chunkZ, emptySections);
-            }
-            if (blockEngine != null) {
-                blockEngine.handleEmptySectionChanges(this.lightAccess, chunkX, chunkZ, emptySections);
-            }
-        } finally {
-            this.releaseSkyLightEngine(skyEngine);
-            this.releaseBlockLightEngine(blockEngine);
-        }
-    }
-
     public void lightChunk(final Chunk chunk, Boolean[] emptySections) {
         if (emptySections == null) {
             emptySections = StarLightEngine.getEmptySectionsForChunk(chunk);
@@ -258,50 +200,18 @@ public final class StarLightInterface {
     }
 
     public void checkChunkEdges(final int chunkX, final int chunkZ) {
-        this.checkSkyEdges(chunkX, chunkZ);
-        this.checkBlockEdges(chunkX, chunkZ);
-    }
-
-    public void checkSkyEdges(final int chunkX, final int chunkZ) {
         final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
+        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
+
         try {
             if (skyEngine != null) {
                 skyEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ);
             }
-        } finally {
-            this.releaseSkyLightEngine(skyEngine);
-        }
-    }
-
-    public void checkBlockEdges(final int chunkX, final int chunkZ) {
-        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
-        try {
             if (blockEngine != null) {
                 blockEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ);
             }
         } finally {
-            this.releaseBlockLightEngine(blockEngine);
-        }
-    }
-
-    public void checkSkyEdges(final int chunkX, final int chunkZ, final ShortCollection sections) {
-        final SkyStarLightEngine skyEngine = this.getSkyLightEngine();
-        try {
-            if (skyEngine != null) {
-                skyEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ, sections);
-            }
-        } finally {
             this.releaseSkyLightEngine(skyEngine);
-        }
-    }
-
-    public void checkBlockEdges(final int chunkX, final int chunkZ, final ShortCollection sections) {
-        final BlockStarLightEngine blockEngine = this.getBlockLightEngine();
-        try {
-            if (blockEngine != null) {
-                blockEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ, sections);
-            }
-        } finally {
             this.releaseBlockLightEngine(blockEngine);
         }
     }
@@ -329,12 +239,6 @@ public final class StarLightInterface {
         try {
             LightQueue.ChunkTasks task;
             while ((task = this.lightQueue.removeFirstTask()) != null) {
-                if (task.lightTasks != null) {
-                    for (final Runnable run : task.lightTasks) {
-                        run.run();
-                    }
-                }
-
                 final long coordinate = task.chunkCoordinate;
                 final int chunkX = CoordinateUtils.getChunkX(coordinate);
                 final int chunkZ = CoordinateUtils.getChunkZ(coordinate);
@@ -348,15 +252,6 @@ public final class StarLightInterface {
                 if (blockEngine != null && (!positions.isEmpty() || sectionChanges != null)) {
                     blockEngine.blocksChangedInChunk(this.lightAccess, chunkX, chunkZ, positions, sectionChanges);
                 }
-
-                if (skyEngine != null && task.queuedEdgeChecksSky != null) {
-                    skyEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ, task.queuedEdgeChecksSky);
-                }
-                if (blockEngine != null && task.queuedEdgeChecksBlock != null) {
-                    blockEngine.checkChunkEdges(this.lightAccess, chunkX, chunkZ, task.queuedEdgeChecksBlock);
-                }
-
-                task.completed = true;
 
                 // Light can propagate into adjacent chunks (up to 15 blocks),
                 // so sync the center chunk and its immediate neighbors
@@ -502,19 +397,8 @@ public final class StarLightInterface {
             tasks.changedSectionSet[sectionY - this.manager.minSection] = Boolean.valueOf(newEmptyValue);
         }
 
-        public void queueChunkLighting(final ChunkPos pos, final Runnable lightTask) {
-            final ChunkTasks tasks = this.chunkTasks.computeIfAbsent(CoordinateUtils.getChunkKey(pos.x, pos.z), ChunkTasks::new);
-            if (tasks.lightTasks == null) {
-                tasks.lightTasks = new ArrayList<>();
-            }
-            tasks.lightTasks.add(lightTask);
-        }
-
         public void removeChunk(final ChunkPos pos) {
-            final ChunkTasks tasks = this.chunkTasks.remove(CoordinateUtils.getChunkKey(pos.x, pos.z));
-            if (tasks != null) {
-                tasks.completed = true;
-            }
+            this.chunkTasks.remove(CoordinateUtils.getChunkKey(pos.x, pos.z));
         }
 
         public ChunkTasks removeFirstTask() {
@@ -529,10 +413,6 @@ public final class StarLightInterface {
             public final Set<BlockPos> changedPositions = new HashSet<>();
             public final long chunkCoordinate;
             public Boolean[] changedSectionSet;
-            public ShortOpenHashSet queuedEdgeChecksSky;
-            public ShortOpenHashSet queuedEdgeChecksBlock;
-            public List<Runnable> lightTasks;
-            public volatile boolean completed;
 
             public ChunkTasks(final long chunkCoordinate) {
                 this.chunkCoordinate = chunkCoordinate;

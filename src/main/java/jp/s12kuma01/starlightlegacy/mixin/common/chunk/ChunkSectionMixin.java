@@ -17,8 +17,6 @@ public abstract class ChunkSectionMixin implements ExtendedChunkSection {
 
     @Unique
     private final long[] starlight$knownBlockTransparencies = new long[16 * 16 * 16 * 2 / Long.SIZE];
-    @Unique
-    protected int starlight$transparentBlockCount;
 
     @Unique
     private static long starlight$getKnownTransparency(final IBlockState state) {
@@ -47,7 +45,6 @@ public abstract class ChunkSectionMixin implements ExtendedChunkSection {
 
     @Override
     public void starlight$initKnownTransparenciesData() {
-        this.starlight$transparentBlockCount = 0;
         final BlockStateContainer data = this.getData();
         if (data == null) return;
         for (int y = 0; y <= 15; ++y) {
@@ -55,9 +52,6 @@ public abstract class ChunkSectionMixin implements ExtendedChunkSection {
                 for (int x = 0; x <= 15; ++x) {
                     final IBlockState state = data.get(x, y, z);
                     final long transparency = starlight$getKnownTransparency(state);
-                    if (transparency == ExtendedChunkSection.BLOCK_IS_TRANSPARENT) {
-                        ++this.starlight$transparentBlockCount;
-                    }
                     this.starlight$updateTransparencyInfo(y | (x << 4) | (z << 8), transparency);
                 }
             }
@@ -65,40 +59,13 @@ public abstract class ChunkSectionMixin implements ExtendedChunkSection {
     }
 
     /**
-     * Initialize transparency data after construction.
-     */
-    @Inject(method = "<init>*", at = @At("RETURN"))
-    private void onConstruct(final CallbackInfo ci) {
-        // Defer initialization until data is available
-    }
-
-    /**
      * Update transparency on block set.
      */
     @Inject(method = "set(IIILnet/minecraft/block/state/IBlockState;)V", at = @At("RETURN"))
     private void onSet(final int x, final int y, final int z, final IBlockState state, final CallbackInfo ci) {
-        // Recalculate this block's transparency
         final long newTransparency = starlight$getKnownTransparency(state);
         final int blockIndex = y | (x << 4) | (z << 8);
-
-        final int arrayIndex = (blockIndex >>> (6 - 1));
-        final int valueShift = (blockIndex & (Long.SIZE / 2 - 1)) << 1;
-        final long oldValue = this.starlight$knownBlockTransparencies[arrayIndex];
-        final long oldTransparency = (oldValue >>> valueShift) & 0b11L;
-
-        if (oldTransparency == ExtendedChunkSection.BLOCK_IS_TRANSPARENT) {
-            --this.starlight$transparentBlockCount;
-        }
-        if (newTransparency == ExtendedChunkSection.BLOCK_IS_TRANSPARENT) {
-            ++this.starlight$transparentBlockCount;
-        }
-
         this.starlight$updateTransparencyInfo(blockIndex, newTransparency);
-    }
-
-    @Override
-    public final boolean hasOpaqueBlocks() {
-        return this.starlight$transparentBlockCount != 4096;
     }
 
     @Override

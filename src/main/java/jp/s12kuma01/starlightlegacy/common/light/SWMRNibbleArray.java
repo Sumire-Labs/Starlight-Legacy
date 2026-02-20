@@ -93,25 +93,6 @@ public final class SWMRNibbleArray {
     }
 
     /**
-     * Copies SWMR data into a vanilla NibbleArray for rendering/mod compat.
-     */
-    public NibbleArray toVanillaNibble() {
-        synchronized (this) {
-            switch (this.stateVisible) {
-                case INIT_STATE_HIDDEN:
-                case INIT_STATE_NULL:
-                    return null;
-                case INIT_STATE_UNINIT:
-                    return new NibbleArray();
-                case INIT_STATE_INIT:
-                    return new NibbleArray(this.storageVisible.clone());
-                default:
-                    throw new IllegalStateException();
-            }
-        }
-    }
-
-    /**
      * Copies SWMR visible data into the given vanilla NibbleArray in place.
      * Returns true if the copy was performed, false if no data available.
      */
@@ -247,20 +228,8 @@ public final class SWMRNibbleArray {
         return this.stateUpdating == INIT_STATE_UNINIT;
     }
 
-    public boolean isUninitialisedVisible() {
-        return this.stateVisible == INIT_STATE_UNINIT;
-    }
-
     public boolean isInitialisedUpdating() {
         return this.stateUpdating == INIT_STATE_INIT;
-    }
-
-    public boolean isInitialisedVisible() {
-        return this.stateVisible == INIT_STATE_INIT;
-    }
-
-    public boolean isHiddenUpdating() {
-        return this.stateUpdating == INIT_STATE_HIDDEN;
     }
 
     protected void swapUpdatingAndMarkDirty() {

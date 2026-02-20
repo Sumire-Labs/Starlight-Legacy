@@ -6,7 +6,6 @@ import jp.s12kuma01.starlightlegacy.common.util.CoordinateUtils;
 import jp.s12kuma01.starlightlegacy.common.util.IntegerUtil;
 import jp.s12kuma01.starlightlegacy.common.util.WorldUtil;
 import jp.s12kuma01.starlightlegacy.common.world.ExtendedWorld;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.shorts.ShortCollection;
 import it.unimi.dsi.fastutil.shorts.ShortIterator;
 import net.minecraft.block.state.IBlockState;
@@ -22,8 +21,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
-import java.util.function.Consumer;
-import java.util.function.IntConsumer;
 
 public abstract class StarLightEngine {
 
@@ -130,10 +127,6 @@ public abstract class StarLightEngine {
         this.sectionCache = new ExtendedBlockStorage[5 * 5 * ((this.maxLightSection - this.minLightSection + 1) + 2)]; // add two extra sections for buffer
         this.nibbleCache = new SWMRNibbleArray[5 * 5 * ((this.maxLightSection - this.minLightSection + 1) + 2)]; // add two extra sections for buffer
         this.notifyUpdateCache = new boolean[5 * 5 * ((this.maxLightSection - this.minLightSection + 1) + 2)]; // add two extra sections for buffer
-    }
-
-    public static SWMRNibbleArray[] getFilledEmptyLight() {
-        return getFilledEmptyLight(16 - (-1) + 1);
     }
 
     public static SWMRNibbleArray[] getFilledEmptyLight(final World world) {
@@ -928,129 +921,6 @@ public abstract class StarLightEngine {
             this.updateVisible(lightAccess);
         } finally {
             this.destroyCaches();
-        }
-    }
-
-    public final void relightChunks(final LightChunkGetter lightAccess, final Set<ChunkPos> chunks,
-                                    final Consumer<ChunkPos> chunkLightCallback, final IntConsumer onComplete) {
-        // it's recommended for maximum performance that the set is ordered according to a BFS from the center of
-        // the region of chunks to relight
-        // it's required that tickets are added for each chunk to keep them loaded
-        final Long2ObjectOpenHashMap<SWMRNibbleArray[]> nibblesByChunk = new Long2ObjectOpenHashMap<>();
-        final Long2ObjectOpenHashMap<boolean[]> emptinessMapByChunk = new Long2ObjectOpenHashMap<>();
-
-        final int[] neighbourLightOrder = new int[]{
-                // d = 0
-                0, 0,
-                // d = 1
-                -1, 0,
-                0, -1,
-                1, 0,
-                0, 1,
-                // d = 2
-                -1, 1,
-                1, 1,
-                -1, -1,
-                1, -1,
-        };
-
-        int lightCalls = 0;
-
-        for (final ChunkPos chunkPos : chunks) {
-            final int chunkX = chunkPos.x;
-            final int chunkZ = chunkPos.z;
-            final Chunk chunk = lightAccess.getChunkForLighting(chunkX, chunkZ);
-            if (chunk == null || !this.canUseChunk(chunk)) {
-                throw new IllegalStateException();
-            }
-
-            for (int i = 0, len = neighbourLightOrder.length; i < len; i += 2) {
-                final int dx = neighbourLightOrder[i];
-                final int dz = neighbourLightOrder[i + 1];
-                final int neighbourX = dx + chunkX;
-                final int neighbourZ = dz + chunkZ;
-
-                final Chunk neighbour = lightAccess.getChunkForLighting(neighbourX, neighbourZ);
-                if (neighbour == null || !this.canUseChunk(neighbour)) {
-                    continue;
-                }
-
-                if (nibblesByChunk.get(CoordinateUtils.getChunkKey(neighbourX, neighbourZ)) != null) {
-                    // lit already called for neighbour, no need to light it now
-                    continue;
-                }
-
-                // light neighbour chunk
-                this.setupEncodeOffset(neighbourX * 16 + 7, 128, neighbourZ * 16 + 7);
-                try {
-                    // insert all neighbouring chunks for this neighbour that we have data for
-                    for (int dz2 = -1; dz2 <= 1; ++dz2) {
-                        for (int dx2 = -1; dx2 <= 1; ++dx2) {
-                            final int neighbourX2 = neighbourX + dx2;
-                            final int neighbourZ2 = neighbourZ + dz2;
-                            final long key = CoordinateUtils.getChunkKey(neighbourX2, neighbourZ2);
-                            final Chunk neighbour2 = lightAccess.getChunkForLighting(neighbourX2, neighbourZ2);
-                            if (neighbour2 == null || !this.canUseChunk(neighbour2)) {
-                                continue;
-                            }
-
-                            final SWMRNibbleArray[] nibbles = nibblesByChunk.get(key);
-                            if (nibbles == null) {
-                                // we haven't lit this chunk
-                                continue;
-                            }
-
-                            this.setChunkInCache(neighbourX2, neighbourZ2, neighbour2);
-                            this.setBlocksForChunkInCache(neighbourX2, neighbourZ2, neighbour2.getBlockStorageArray());
-                            this.setNibblesForChunkInCache(neighbourX2, neighbourZ2, nibbles);
-                            this.setEmptinessMapCache(neighbourX2, neighbourZ2, emptinessMapByChunk.get(key));
-                        }
-                    }
-
-                    final long key = CoordinateUtils.getChunkKey(neighbourX, neighbourZ);
-
-                    // now insert the neighbour chunk and light it
-                    final SWMRNibbleArray[] nibbles = getFilledEmptyLight(this.world);
-                    nibblesByChunk.put(key, nibbles);
-
-                    this.setChunkInCache(neighbourX, neighbourZ, neighbour);
-                    this.setBlocksForChunkInCache(neighbourX, neighbourZ, neighbour.getBlockStorageArray());
-                    this.setNibblesForChunkInCache(neighbourX, neighbourZ, nibbles);
-
-                    final boolean[] neighbourEmptiness = this.handleEmptySectionChanges(lightAccess, neighbour, getEmptySectionsForChunk(neighbour), true);
-                    emptinessMapByChunk.put(key, neighbourEmptiness);
-                    if (chunks.contains(new ChunkPos(neighbourX, neighbourZ))) {
-                        this.setEmptinessMap(neighbour, neighbourEmptiness);
-                    }
-
-                    this.lightChunk(lightAccess, neighbour, false);
-                } finally {
-                    this.destroyCaches();
-                }
-            }
-
-            // done lighting all neighbours, so the chunk is now fully lit
-
-            // make sure nibbles are fully updated before calling back
-            final SWMRNibbleArray[] nibbles = nibblesByChunk.get(CoordinateUtils.getChunkKey(chunkX, chunkZ));
-            for (final SWMRNibbleArray nibble : nibbles) {
-                nibble.updateVisible();
-            }
-
-            this.setNibbles(chunk, nibbles);
-
-            // In 1.12.2, there is no LightLayer/SectionPos notification system.
-            // Vanilla rendering will pick up changes through syncNibbleToVanilla or chunk re-render.
-
-            // now do callback
-            if (chunkLightCallback != null) {
-                chunkLightCallback.accept(chunkPos);
-            }
-            ++lightCalls;
-        }
-
-        if (onComplete != null) {
-            onComplete.accept(lightCalls);
         }
     }
 

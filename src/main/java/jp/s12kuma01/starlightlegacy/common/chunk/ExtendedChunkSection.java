@@ -7,8 +7,6 @@ public interface ExtendedChunkSection {
     long BLOCK_UNKNOWN_TRANSPARENCY = 0b10;
     long BLOCK_SPECIAL_TRANSPARENCY = 0b11;
 
-    boolean hasOpaqueBlocks();
-
     /* NOTE: Index is y | (x << 4) | (z << 8) */
     long getKnownTransparency(final int blockIndex);
 
