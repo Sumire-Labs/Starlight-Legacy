@@ -1,5 +1,6 @@
 package jp.s12kuma01.starlightlegacy.mixin.common.world;
 
+import jp.s12kuma01.starlightlegacy.common.chunk.ExtendedChunk;
 import jp.s12kuma01.starlightlegacy.common.light.StarLightInterface;
 import jp.s12kuma01.starlightlegacy.common.world.ExtendedWorld;
 import net.minecraft.world.WorldServer;
@@ -18,6 +19,9 @@ public abstract class ChunkProviderServerMixin {
     @Shadow
     @Final
     public WorldServer world;
+
+    @Shadow
+    public abstract Chunk getLoadedChunk(int x, int z);
 
     /**
      * Process all pending light updates before saving chunks.
@@ -43,14 +47,34 @@ public abstract class ChunkProviderServerMixin {
     }
 
     /**
-     * Ensure chunk is lit when provided to callers.
-     * Hook into provideChunk to initialize lighting for newly loaded/generated chunks.
+     * Ensure chunk is lit when provided to callers, then recheck edges of
+     * already-lit cardinal neighbours so light propagates across chunk boundaries.
      */
     @Inject(method = "provideChunk", at = @At("RETURN"))
     private void onProvideChunk(final int x, final int z, final CallbackInfoReturnable<Chunk> cir) {
         final Chunk chunk = cir.getReturnValue();
-        if (chunk != null) {
-            StarLightInterface.ensureChunkLit(this.world, chunk);
+        if (chunk == null) {
+            return;
+        }
+
+        final boolean wasLit = ((ExtendedChunk) chunk).isStarlightLit();
+        StarLightInterface.ensureChunkLit(this.world, chunk);
+
+        // If this chunk was just freshly lit, recheck edges of loaded neighbours.
+        // checkChunkEdges is self-contained (sets up caches, runs BFS, calls updateVisible),
+        // so we only need to sync the vanilla NibbleArrays afterwards.
+        if (!wasLit) {
+            final StarLightInterface lightEngine = ((ExtendedWorld) this.world).getLightEngine();
+            if (lightEngine != null) {
+                final int[][] offsets = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
+                for (final int[] off : offsets) {
+                    final Chunk neighbor = this.getLoadedChunk(x + off[0], z + off[1]);
+                    if (neighbor != null && ((ExtendedChunk) neighbor).isStarlightLit()) {
+                        lightEngine.checkChunkEdges(x + off[0], z + off[1]);
+                        StarLightInterface.syncNibbleToVanilla(neighbor);
+                    }
+                }
+            }
         }
     }
 }
